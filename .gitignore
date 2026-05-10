@@ -32,7 +32,17 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
+.env.local
 .env*.local
+
+# scratch / non-committed plan docs
+.DONOTCOMMIT/
+
+# Playwright artifacts
+test-results/
+playwright-report/
+playwright/.cache/
 
 # typescript
 *.tsbuildinfo
