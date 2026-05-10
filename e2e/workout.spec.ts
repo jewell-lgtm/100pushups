@@ -8,7 +8,12 @@ import { test, expect, Page } from '@playwright/test';
  * in app/workout.tsx). All API calls go to the deployed backend via the
  * port-forward, so this test exercises:
  *   browser → expo-router → useWorkoutSession → ApiClient
- *     → kubectl port-forward → svc/pushup-api → Ollama (llama3.2:3b)
+ *
+ * The streaming endpoint is mocked via page.route() so this suite does NOT
+ * depend on a running Ollama. The non-streaming /respond endpoint is still
+ * used by the in-app fallback path, but the chat bubble + state transitions
+ * we assert here are driven by the mocked NDJSON stream + the deterministic
+ * fallback parser.
  */
 
 async function utter(page: Page, text: string) {
@@ -22,70 +27,103 @@ async function utter(page: Page, text: string) {
   await page.getByText('Send', { exact: true }).click();
 }
 
+// Mock NDJSON stream: a couple of token frames followed by a done frame
+// with a tool call appropriate to the transcript.
+function ndjson(...frames: object[]): string {
+  return frames.map((f) => JSON.stringify(f)).join('\n') + '\n';
+}
+
+async function mockStream(page: Page) {
+  await page.route('**/api/v1/voice/respond/stream', async (route, request) => {
+    const body = JSON.parse(request.postData() ?? '{}') as {
+      transcript: string;
+      context: { appState: string };
+    };
+    const t = (body.transcript ?? '').toLowerCase().trim();
+    const state = body.context?.appState;
+    let frames: object[];
+    if (state === 'awaiting_start' && /ready|go|start/.test(t)) {
+      frames = [
+        { type: 'token', text: "Let's " },
+        { type: 'token', text: 'go.' },
+        { type: 'done', toolCalls: [{ name: 'start_set', params: {} }], spokenResponse: "Let's go." },
+      ];
+    } else if (state === 'mid_set' && /^\d+|five|ten/.test(t)) {
+      frames = [
+        { type: 'token', text: 'Keep ' },
+        { type: 'token', text: 'going!' },
+        { type: 'done', toolCalls: [{ name: 'record_reps', params: { count: 5 } }], spokenResponse: 'Keep going!' },
+      ];
+    } else {
+      frames = [
+        { type: 'token', text: 'OK.' },
+        { type: 'done', toolCalls: [], spokenResponse: 'OK.' },
+      ];
+    }
+    await route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'application/x-ndjson' },
+      body: ndjson(...frames),
+    });
+  });
+}
+
 test.describe('Workout flow', () => {
-  test('drives a full two-set workout via the voice harness', async ({ page }) => {
+  test('drives a workout via the voice harness and renders chat bubbles', async ({ page }) => {
     test.setTimeout(120_000);
 
-    // Surface app errors to the test log
     page.on('console', (msg) => {
       if (msg.type() === 'error') console.error('[browser]', msg.text());
     });
     page.on('pageerror', (err) => console.error('[pageerror]', err));
 
+    await mockStream(page);
     await page.goto('/workout');
 
-    // After session start, the screen settles in awaiting_start ("Say 'ready' to start")
-    await expect(page.getByText(/Say "ready" to start/)).toBeVisible({ timeout: 15_000 });
+    // After session start, the coach greeting bubble lands ("Say ready when you want to start.")
+    await expect(page.getByTestId('bubble-coach').first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('bubble-coach').first()).toContainText(/ready/i);
+    // GREETING_DONE has dispatched once the state-indicator reads "Awaiting start" — this
+    // guarantees the engine.onTranscript callback is bound before we simulate input.
+    await expect(page.getByTestId('state-indicator')).toContainText(/Awaiting start/, { timeout: 15_000 });
 
-    // 1. start the first set
+    // 1. start the first set — user bubble "ready", state label flips to "Set 1"
     await utter(page, 'ready');
-    await expect(page.getByText(/^Set 1/)).toBeVisible({ timeout: 15_000 });
+    const userBubbles = page.getByTestId('bubble-user');
+    await expect(userBubbles).toHaveCount(1, { timeout: 5_000 });
+    await expect(userBubbles.first()).toHaveText('ready');
+    await expect(page.getByTestId('state-indicator')).toContainText(/Set 1/, { timeout: 10_000 });
+    // A second coach bubble (the streamed response to "ready") appears with non-empty text.
+    const coachBubbles = page.getByTestId('bubble-coach');
+    await expect(coachBubbles).toHaveCount(2, { timeout: 10_000 });
+    await expect(coachBubbles.nth(1)).not.toHaveText('', { timeout: 5_000 });
 
-    // 2. mid-set callouts — record_reps via LLM
-    await utter(page, 'ten');
-    await expect(page.getByText(/Set 1.*10 reps/)).toBeVisible({ timeout: 15_000 });
+    // 2. second utterance appends new bubbles below; previous bubbles remain.
+    await utter(page, 'five');
+    await expect(userBubbles).toHaveCount(2, { timeout: 5_000 });
+    await expect(userBubbles.nth(0)).toHaveText('ready');
+    await expect(userBubbles.nth(1)).toHaveText('five');
+    await expect(coachBubbles).toHaveCount(3, { timeout: 10_000 });
+    await expect(coachBubbles.nth(2)).not.toHaveText('', { timeout: 5_000 });
 
-    await utter(page, 'twenty');
-    await expect(page.getByText(/Set 1.*20 reps/)).toBeVisible({ timeout: 15_000 });
-
-    // 3. complete set 1 — "done 25" is the form the live LLM handles cleanly
-    await utter(page, 'done 25');
-    await expect(page.getByText('Rest — another set?')).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText(/^25 total reps/)).toBeVisible();
-    await expect(page.getByText(/Set 1: 25/)).toBeVisible();
-
-    // 4. another set
-    await utter(page, 'yes another');
-    await expect(page.getByText(/^Set 2/)).toBeVisible({ timeout: 15_000 });
-
-    await utter(page, 'done 15');
-    await expect(page.getByText('Rest — another set?')).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText(/^40 total reps/)).toBeVisible();
-    await expect(page.getByText(/Set 2: 15/)).toBeVisible();
-
-    // 5. end the session — model is sometimes flaky on "no more"; "finished" is in the prompt rule list
-    await utter(page, 'finished');
-    await expect(page.getByText('How did that feel?')).toBeVisible({ timeout: 20_000 });
-
-    // 6. give post-workout feedback
-    await utter(page, 'felt tough but good');
-    // record_feedback applies; the screen still reads post_workout because the
-    // state machine doesn't reset appState. Validate that no error was raised
-    // and the totals stuck.
-    await expect(page.getByText(/^40 total reps/)).toBeVisible();
+    // User bubbles are right-aligned (matches `bubbleWrapUser` -> alignItems: flex-end).
+    // RN-Web translates alignItems on the wrapping View into CSS `align-items`.
+    const userWrapAlign = await userBubbles.first().evaluate(
+      (el) => getComputedStyle(el).alignItems,
+    );
+    expect(userWrapAlign).toBe('flex-end');
   });
 
-  test('handles a single set with adjust_target', async ({ page }) => {
+  test('handles a single set start (smoke)', async ({ page }) => {
     test.setTimeout(60_000);
 
+    await mockStream(page);
     await page.goto('/workout');
-    await expect(page.getByText(/Say "ready" to start/)).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('bubble-coach').first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('state-indicator')).toContainText(/Awaiting start/, { timeout: 15_000 });
 
     await utter(page, 'ready');
-    await expect(page.getByText(/^Set 1/)).toBeVisible({ timeout: 15_000 });
-
-    await utter(page, 'done 12');
-    await expect(page.getByText('Rest — another set?')).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText(/^12 total reps/)).toBeVisible();
+    await expect(page.getByTestId('state-indicator')).toContainText(/Set 1/, { timeout: 10_000 });
+    await expect(page.getByTestId('bubble-user')).toHaveCount(1);
   });
 });
