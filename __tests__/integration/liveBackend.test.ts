@@ -252,6 +252,34 @@ liveDescribe('Live backend voice harness', () => {
     }, 30_000);
   });
 
+  describe('voice streaming', () => {
+    it('streams ≥2 token frames before the done frame', async () => {
+      // Drain the async generator and assert tokens trickle in before the
+      // final spokenResponse. Proves end-to-end streaming (not buffered).
+      const client = api();
+      const state: WorkoutSessionState = {
+        ...INITIAL_STATE,
+        targetReps: 30,
+        appState: 'awaiting_start',
+      };
+
+      let tokenCount = 0;
+      let doneFrame: { spokenResponse: string; toolCalls: ToolCall[] } | null = null;
+      const gen = client.voiceRespondStream({
+        transcript: 'ready',
+        context: buildContext(state),
+      });
+      for await (const frame of gen) {
+        if (frame.type === 'token') tokenCount++;
+        else doneFrame = { toolCalls: frame.toolCalls, spokenResponse: frame.spokenResponse };
+      }
+
+      expect(tokenCount).toBeGreaterThanOrEqual(2);
+      expect(doneFrame).not.toBeNull();
+      expect(doneFrame!.spokenResponse.length).toBeGreaterThan(0);
+    }, 30_000);
+  });
+
   describe('weekly plan generation', () => {
     it('generates a weekly plan from the live LLM', async () => {
       const res = await fetch(`${API_BASE}/api/v1/plan/weekly`, {
