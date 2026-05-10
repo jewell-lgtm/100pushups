@@ -63,6 +63,7 @@ export default function WorkoutScreen() {
     // eslint-disable-next-line require-yield
     voiceRespondStream: async function* () { throw new Error('api not ready'); },
     syncWorkouts: async () => { throw new Error('api not ready'); },
+    generateWeeklyPlan: async () => { throw new Error('api not ready'); },
     isReachable: async () => false,
   };
 

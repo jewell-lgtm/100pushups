@@ -80,6 +80,9 @@ function makeFakeApi(opts: {
       if (opts.syncImpl) return opts.syncImpl(req);
       return { synced: req.sessions.map((s) => s.id) };
     },
+    async generateWeeklyPlan() {
+      throw new Error('not used');
+    },
     async isReachable(): Promise<boolean> {
       return opts.reachable ?? true;
     },

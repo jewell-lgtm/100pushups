@@ -1,6 +1,8 @@
 import {
   AuthError,
   createApiClient,
+  GeneratePlanRequest,
+  GeneratePlanResponse,
   IApiClient,
   StreamFrame,
   SyncRequest,
@@ -108,6 +110,17 @@ function wrapWithRetry(inner: IApiClient): IApiClient {
         if (err instanceof AuthError) {
           const refreshed = await reauthOnce();
           return await refreshed.syncWorkouts(req);
+        }
+        throw err;
+      }
+    },
+    async generateWeeklyPlan(req: GeneratePlanRequest): Promise<GeneratePlanResponse> {
+      try {
+        return await inner.generateWeeklyPlan(req);
+      } catch (err) {
+        if (err instanceof AuthError) {
+          const refreshed = await reauthOnce();
+          return await refreshed.generateWeeklyPlan(req);
         }
         throw err;
       }

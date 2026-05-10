@@ -37,10 +37,26 @@ export interface SyncResponse {
   synced: string[];
 }
 
+// Mirror of `backend/src/routes/planning.ts` POST /weekly response. The
+// server stamps `weekStart` (next Monday) and persists its own row with
+// `device_id`; the client mirrors the row into local SQLite so the Plan
+// screen reads stay offline-friendly.
+export interface GeneratePlanRequest {
+  exerciseId: string;
+}
+
+export interface GeneratePlanResponse {
+  id: string;
+  weekStart: string;
+  dailyTargets: Record<string, number>;
+  notes: string;
+}
+
 export interface IApiClient {
   voiceRespond(request: VoiceRequest): Promise<VoiceResponse>;
   voiceRespondStream(request: VoiceRequest): AsyncGenerator<StreamFrame, void, void>;
   syncWorkouts(request: SyncRequest): Promise<SyncResponse>;
+  generateWeeklyPlan(request: GeneratePlanRequest): Promise<GeneratePlanResponse>;
   isReachable(): Promise<boolean>;
 }
 
@@ -81,6 +97,10 @@ export function createApiClient(baseUrl: string, options: ApiClientOptions = {})
 
   async function syncWorkouts(request: SyncRequest): Promise<SyncResponse> {
     return fetchJson<SyncResponse>('/api/v1/workouts/sync', request);
+  }
+
+  async function generateWeeklyPlan(request: GeneratePlanRequest): Promise<GeneratePlanResponse> {
+    return fetchJson<GeneratePlanResponse>('/api/v1/plan/weekly', request);
   }
 
   async function* voiceRespondStream(
@@ -141,6 +161,7 @@ export function createApiClient(baseUrl: string, options: ApiClientOptions = {})
     voiceRespond,
     voiceRespondStream,
     syncWorkouts,
+    generateWeeklyPlan,
     async isReachable(): Promise<boolean> {
       try {
         const response = await fetch(`${baseUrl}/health`, {

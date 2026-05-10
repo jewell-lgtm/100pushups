@@ -46,6 +46,7 @@ describe('runChatExchange', () => {
     const fakeApi: IApiClient = {
       voiceRespond: jest.fn(),
       syncWorkouts: jest.fn(),
+      generateWeeklyPlan: jest.fn(),
       isReachable: jest.fn().mockResolvedValue(true),
       voiceRespondStream: genFrom([
         { type: 'token', text: 'Go' },
@@ -88,6 +89,7 @@ describe('runChatExchange', () => {
     const fakeApi: IApiClient = {
       voiceRespond: jest.fn(),
       syncWorkouts: jest.fn(),
+      generateWeeklyPlan: jest.fn(),
       isReachable: jest.fn().mockResolvedValue(true),
       voiceRespondStream: genFrom([
         { type: 'done', toolCalls: [], spokenResponse: 'Say ready when you want to start.' },
@@ -114,6 +116,7 @@ describe('runChatExchange', () => {
     const fakeApi: IApiClient = {
       voiceRespond: jest.fn(),
       syncWorkouts: jest.fn(),
+      generateWeeklyPlan: jest.fn(),
       isReachable: jest.fn().mockResolvedValue(true),
       // eslint-disable-next-line require-yield
       voiceRespondStream: (async function* () {
@@ -146,6 +149,7 @@ describe('runChatExchange', () => {
     const fakeApi: IApiClient = {
       voiceRespond: jest.fn(),
       syncWorkouts: jest.fn(),
+      generateWeeklyPlan: jest.fn(),
       isReachable: jest.fn().mockResolvedValue(true),
       voiceRespondStream: (async function* () {
         yield { type: 'token', text: 'Thi' };
@@ -182,6 +186,7 @@ describe('runChatExchange', () => {
     const fakeApi: IApiClient = {
       voiceRespond: jest.fn(),
       syncWorkouts: jest.fn(),
+      generateWeeklyPlan: jest.fn(),
       isReachable: jest.fn().mockResolvedValue(true),
       voiceRespondStream: genFrom([
         { type: 'token', text: 'partial' },
@@ -211,6 +216,7 @@ describe('runChatExchange', () => {
     const fakeApi: IApiClient = {
       voiceRespond: jest.fn(),
       syncWorkouts: jest.fn(),
+      generateWeeklyPlan: jest.fn(),
       isReachable: jest.fn().mockResolvedValue(true),
       voiceRespondStream: genFrom([
         { type: 'token', text: 'hi' },
