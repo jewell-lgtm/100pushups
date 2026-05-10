@@ -10,21 +10,12 @@ import { ITTSManager } from '../voice/TTSManager';
 import { IVoiceManager } from '../voice/VoiceManager';
 import { IApiClient, normalizeToolCall } from '../api/client';
 import { IRepository } from '../db/repository';
-import { AppState, ToolCall, VoiceContext, VoiceResponse } from '../api/types';
+import { VoiceContext, VoiceResponse } from '../api/types';
 import { fallbackParse } from '../voice/FallbackParser';
 import { ChatMessage, runChatExchange } from './chatLog';
+import { filterValidTools } from './validTools';
 
 export type { ChatMessage, ChatRole, ChatStatus } from './chatLog';
-
-// Which tool names are valid in each app state. Used to filter out
-// LLM hallucinations (e.g. complete_set issued from between_sets).
-const VALID_TOOLS_BY_STATE: Record<AppState, ReadonlySet<ToolCall['name']>> = {
-  idle: new Set(),
-  awaiting_start: new Set(['start_set', 'adjust_target']),
-  mid_set: new Set(['record_reps', 'complete_set', 'adjust_target', 'end_session']),
-  between_sets: new Set(['start_set', 'end_session', 'adjust_target']),
-  post_workout: new Set(['record_feedback']),
-};
 
 interface UseWorkoutSessionOptions {
   tts: ITTSManager;
@@ -137,11 +128,10 @@ export function useWorkoutSession({
       // between_sets, which corrupts state. If filtering leaves nothing —
       // or the LLM returned no tools at all — try the deterministic
       // fallback parser before giving up.
-      const validTools = VALID_TOOLS_BY_STATE[s.appState];
-      const validCalls = response.toolCalls.filter((tc) => validTools.has(tc.name));
+      const validCalls = filterValidTools(response.toolCalls, s.appState);
       if (validCalls.length === 0) {
         const fallback = fallbackParse(transcript, s.appState, s.targetReps);
-        const fallbackValid = fallback.toolCalls.filter((tc) => validTools.has(tc.name));
+        const fallbackValid = filterValidTools(fallback.toolCalls, s.appState);
         if (fallbackValid.length > 0) {
           validCalls.push(...fallbackValid);
           if (fallback.spokenResponse) {

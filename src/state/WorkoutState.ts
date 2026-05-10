@@ -86,7 +86,15 @@ function handleToolCall(
     }
 
     case 'complete_set': {
-      const { reps } = toolCall.params;
+      // The system prompt tells the LLM that "done without a number" means
+      // "use the last recorded reps count". The LLM sometimes emits
+      // complete_set(reps=0) instead — fall back to the running count.
+      // If both are 0, we genuinely have no reps to record: drop the call.
+      const reportedReps = toolCall.params.reps;
+      const reps = reportedReps > 0 ? reportedReps : state.currentSetReps;
+      if (reps <= 0) {
+        return { state, effects: [] };
+      }
       const completedSet = { setNumber: state.currentSetNumber, reps };
       return {
         state: {

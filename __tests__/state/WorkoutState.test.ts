@@ -88,6 +88,47 @@ describe('WorkoutState', () => {
     });
   });
 
+  describe('complete_set with reps=0', () => {
+    it('falls back to currentSetReps when LLM passes 0 ("done without a number")', () => {
+      const midSet: WorkoutSessionState = {
+        ...INITIAL_STATE,
+        appState: 'mid_set',
+        currentSetNumber: 1,
+        currentSetReps: 18,
+        currentSetStartedAt: '2026-05-10T12:00:00Z',
+      };
+
+      const { state, effects } = reduce(midSet, {
+        type: 'TOOL_CALL',
+        toolCall: { name: 'complete_set', params: { reps: 0 } },
+      });
+
+      expect(state.appState).toBe('between_sets');
+      expect(state.setsCompleted).toEqual([{ setNumber: 1, reps: 18 }]);
+      expect(state.totalReps).toBe(18);
+      expect(effects).toContainEqual({ type: 'SAVE_SET', setNumber: 1, reps: 18 });
+    });
+
+    it('drops the call entirely when both reps and currentSetReps are 0', () => {
+      const midSet: WorkoutSessionState = {
+        ...INITIAL_STATE,
+        appState: 'mid_set',
+        currentSetNumber: 1,
+        currentSetReps: 0,
+        currentSetStartedAt: '2026-05-10T12:00:00Z',
+      };
+
+      const { state, effects } = reduce(midSet, {
+        type: 'TOOL_CALL',
+        toolCall: { name: 'complete_set', params: { reps: 0 } },
+      });
+
+      // No 0-rep set recorded; state unchanged.
+      expect(state).toEqual(midSet);
+      expect(effects).toEqual([]);
+    });
+  });
+
   describe('session_reset', () => {
     it('returns to initial state', () => {
       const dirty: WorkoutSessionState = {
