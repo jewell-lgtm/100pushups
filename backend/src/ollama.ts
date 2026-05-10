@@ -158,6 +158,21 @@ function buildSystemPrompt(context: VoiceContext): string {
 
 export interface IOllamaClient {
   voiceRespond(transcript: string, context: VoiceContext): Promise<OllamaResponse>;
+  voiceRespondStream(
+    transcript: string,
+    context: VoiceContext,
+    onToken: (text: string) => void,
+  ): Promise<OllamaResponse>;
+}
+
+interface OllamaStreamFrame {
+  message?: {
+    content?: string;
+    tool_calls?: Array<{
+      function: { name: string; arguments: Record<string, unknown> };
+    }>;
+  };
+  done?: boolean;
 }
 
 export interface OllamaAuth {
@@ -219,7 +234,95 @@ export function createOllamaClient(baseUrl: string, model: string, auth?: Ollama
         spokenResponse: data.message.content?.trim() ?? '',
       };
     },
+
+    async voiceRespondStream(
+      transcript: string,
+      context: VoiceContext,
+      onToken: (text: string) => void,
+    ): Promise<OllamaResponse> {
+      const systemPrompt = buildSystemPrompt(context);
+      let accumulated = '';
+      const toolCalls: ToolCall[] = [];
+
+      try {
+        const response = await fetch(`${baseUrl}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(15000),
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: transcript },
+            ],
+            tools: TOOLS,
+            stream: true,
+            options: {
+              temperature: 0.7,
+              num_predict: 80,
+            },
+          }),
+        });
+
+        if (!response.ok || !response.body) {
+          return { toolCalls: [], spokenResponse: '' };
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        // NDJSON loop: split on \n; keep the trailing partial line in buffer.
+        while (true) {
+          const { value, done } = await reader.read();
+          if (value) {
+            buffer += decoder.decode(value, { stream: true });
+            let nl = buffer.indexOf('\n');
+            while (nl !== -1) {
+              const line = buffer.slice(0, nl).trim();
+              buffer = buffer.slice(nl + 1);
+              if (line) processFrame(line, toolCalls, (delta) => {
+                accumulated += delta;
+                onToken(delta);
+              });
+              nl = buffer.indexOf('\n');
+            }
+          }
+          if (done) break;
+        }
+        // Flush any final non-newline-terminated frame.
+        const tail = buffer.trim();
+        if (tail) processFrame(tail, toolCalls, (delta) => {
+          accumulated += delta;
+          onToken(delta);
+        });
+      } catch {
+        return { toolCalls: [], spokenResponse: '' };
+      }
+
+      return { toolCalls, spokenResponse: accumulated.trim() };
+    },
   };
+}
+
+function processFrame(
+  line: string,
+  toolCalls: ToolCall[],
+  emit: (delta: string) => void,
+): void {
+  let frame: OllamaStreamFrame;
+  try {
+    frame = JSON.parse(line) as OllamaStreamFrame;
+  } catch {
+    return;
+  }
+  const delta = frame.message?.content;
+  if (delta) emit(delta);
+  if (frame.message?.tool_calls) {
+    for (const tc of frame.message.tool_calls) {
+      toolCalls.push({ name: tc.function.name, params: tc.function.arguments });
+    }
+  }
 }
 
 // Weekly planning prompt
