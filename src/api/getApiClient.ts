@@ -18,6 +18,13 @@ export function getApiBase(): string {
 
 let cached: { token: string; client: IApiClient } | null = null;
 
+// Module-level promise so two concurrent AuthError-triggered retries (e.g.
+// a voice call and a stats fetch both 401ing at once) coalesce into a
+// single registerDevice round-trip. Without this each wrapped client has
+// its own `retrying` flag and they race — backend tolerates the double
+// register, but it's wasteful and orders unpredictably.
+let inflightReauth: Promise<IApiClient> | null = null;
+
 function buildClient(token: string): IApiClient {
   return createApiClient(API_BASE, { authHeader: `Bearer ${token}` });
 }
@@ -35,24 +42,38 @@ async function reauthenticate(): Promise<IApiClient> {
   return client;
 }
 
+// Coalesce concurrent reauth attempts. First caller does the work; everyone
+// else awaits the same promise. Cleared in `finally` so the next 401 burst
+// can trigger a fresh attempt.
+function reauthOnce(): Promise<IApiClient> {
+  if (!inflightReauth) {
+    inflightReauth = reauthenticate().finally(() => {
+      inflightReauth = null;
+    });
+  }
+  return inflightReauth;
+}
+
+// Test-only hook to reset the module-level state between tests.
+export function _resetReauthForTests(): void {
+  inflightReauth = null;
+}
+
 function wrapWithRetry(inner: IApiClient): IApiClient {
   // Wraps voiceRespond/voiceRespondStream so a single AuthError triggers
   // reauth + retry. Stream retry only fires before the first yielded frame
   // — partial-stream auth failures would corrupt the consumer's state.
-  let retrying = false;
+  // Concurrency is handled by the module-level `inflightReauth` promise:
+  // a burst of parallel 401s coalesces into one registerDevice call, and
+  // the second pass through the inner client uses the refreshed token.
   return {
     async voiceRespond(req: VoiceRequest): Promise<VoiceResponse> {
       try {
         return await inner.voiceRespond(req);
       } catch (err) {
-        if (err instanceof AuthError && !retrying) {
-          retrying = true;
-          try {
-            const refreshed = await reauthenticate();
-            return await refreshed.voiceRespond(req);
-          } finally {
-            retrying = false;
-          }
+        if (err instanceof AuthError) {
+          const refreshed = await reauthOnce();
+          return await refreshed.voiceRespond(req);
         }
         throw err;
       }
@@ -65,15 +86,10 @@ function wrapWithRetry(inner: IApiClient): IApiClient {
           yield frame;
         }
       } catch (err) {
-        if (err instanceof AuthError && !retrying && yielded === 0) {
-          retrying = true;
-          try {
-            const refreshed = await reauthenticate();
-            yield* refreshed.voiceRespondStream(req);
-            return;
-          } finally {
-            retrying = false;
-          }
+        if (err instanceof AuthError && yielded === 0) {
+          const refreshed = await reauthOnce();
+          yield* refreshed.voiceRespondStream(req);
+          return;
         }
         throw err;
       }
