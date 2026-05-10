@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { useRouter } from 'expo-router';
 import { getDatabase } from '../src/db/getDatabase';
 import { createRepository } from '../src/db/repository';
@@ -8,6 +16,7 @@ import { createVoiceManager, VoiceEngine } from '../src/voice/VoiceManager';
 import { IApiClient } from '../src/api/client';
 import { getApiClient } from '../src/api/getApiClient';
 import { useWorkoutSession } from '../src/hooks/useWorkoutSession';
+import type { ChatMessage } from '../src/hooks/chatLog';
 
 function createPlaceholderEngine(): VoiceEngine & {
   simulateResults(results: string[]): void;
@@ -42,16 +51,18 @@ export default function WorkoutScreen() {
   const apiRef = useRef<IApiClient | null>(null);
   const dbRef = useRef<any>(null);
   const repoRef = useRef<any>(null);
+  const scrollRef = useRef<ScrollView | null>(null);
 
   // Stable stub used until the real API client is loaded post-mount.
   // Voice calls in those first few ms will throw and the hook will fall
   // back to FallbackParser — that's fine.
   const stubApi: IApiClient = {
     voiceRespond: async () => { throw new Error('api not ready'); },
+    voiceRespondStream: async () => { throw new Error('api not ready'); },
     isReachable: async () => false,
   };
 
-  const { state, startSession } = useWorkoutSession({
+  const { state, chatLog, startSession } = useWorkoutSession({
     tts: ttsRef.current!,
     voice: voiceRef.current!,
     api: apiRef.current ?? stubApi,
@@ -68,6 +79,7 @@ export default function WorkoutScreen() {
     (async () => {
       const [db, api] = await Promise.all([getDatabase(), getApiClient()]);
       dbRef.current = db;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       repoRef.current = createRepository(db as any);
       apiRef.current = api;
       setReady(true);
@@ -86,6 +98,20 @@ export default function WorkoutScreen() {
     }
   }, [state.appState, state.userFeedback]);
 
+  // Auto-scroll on new messages or token streaming. Tracking the latest
+  // coach message text means we re-scroll as deltas arrive.
+  const lastCoachText = chatLog
+    .slice()
+    .reverse()
+    .find((m) => m.role === 'coach')?.text ?? '';
+  useEffect(() => {
+    // setTimeout 0 lets layout settle before scroll
+    const t = setTimeout(() => {
+      scrollRef.current?.scrollToEnd({ animated: true });
+    }, 0);
+    return () => clearTimeout(t);
+  }, [chatLog.length, lastCoachText]);
+
   const sendText = useCallback(() => {
     if (!textInput.trim()) return;
     engineRef.current?.simulateResults([textInput.trim()]);
@@ -94,37 +120,36 @@ export default function WorkoutScreen() {
 
   const stateLabel = {
     idle: 'Starting...',
-    awaiting_start: 'Say "ready" to start',
+    awaiting_start: 'Awaiting start',
     mid_set: `Set ${state.currentSetNumber} — ${state.currentSetReps} reps`,
-    between_sets: 'Rest — another set?',
-    post_workout: 'How did that feel?',
+    between_sets: 'Resting',
+    post_workout: 'Wrapping up',
   }[state.appState];
 
   return (
     <View style={styles.container}>
-      <View style={styles.stateIndicator}>
+      <View style={styles.topBar} testID="state-indicator">
         <Text style={styles.stateText}>{stateLabel}</Text>
+        <View style={styles.topMeta}>
+          {state.targetReps !== null && (
+            <Text style={styles.metaText}>Target {state.targetReps}</Text>
+          )}
+          <Text style={styles.metaText}>
+            {state.totalReps} reps · {state.setsCompleted.length} sets
+          </Text>
+        </View>
       </View>
 
-      {state.targetReps !== null && state.appState === 'mid_set' && (
-        <Text style={styles.targetText}>
-          Target: {state.targetReps}
-        </Text>
-      )}
-
-      <Text style={styles.totalText}>
-        {state.totalReps} total reps
-      </Text>
-
-      {state.setsCompleted.length > 0 && (
-        <View style={styles.setsContainer}>
-          {state.setsCompleted.map((s) => (
-            <Text key={s.setNumber} style={styles.setText}>
-              Set {s.setNumber}: {s.reps}
-            </Text>
-          ))}
-        </View>
-      )}
+      <ScrollView
+        ref={scrollRef}
+        style={styles.chatScroll}
+        contentContainerStyle={styles.chatContent}
+        keyboardShouldPersistTaps="handled"
+      >
+        {chatLog.map((m) => (
+          <ChatBubble key={m.id} message={m} />
+        ))}
+      </ScrollView>
 
       <View style={styles.inputRow}>
         <TextInput
@@ -144,52 +169,110 @@ export default function WorkoutScreen() {
   );
 }
 
+function ChatBubble({ message }: { message: ChatMessage }) {
+  const isUser = message.role === 'user';
+  const wrapStyle = isUser ? styles.bubbleWrapUser : styles.bubbleWrapCoach;
+  const bubbleStyle = isUser ? styles.bubbleUser : styles.bubbleCoach;
+  const textStyle = isUser ? styles.bubbleTextUser : styles.bubbleTextCoach;
+
+  return (
+    <View style={wrapStyle} testID={`bubble-${message.role}`}>
+      <View style={bubbleStyle}>
+        {message.status === 'pending' ? (
+          <ActivityIndicator color="#e94560" testID="bubble-spinner" />
+        ) : (
+          <Text style={textStyle}>
+            {message.text}
+            {message.status === 'streaming' && (
+              <Text style={styles.caret}>▍</Text>
+            )}
+          </Text>
+        )}
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0f0f23',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
+    paddingTop: 24,
   },
-  stateIndicator: {
-    backgroundColor: '#1a1a2e',
-    borderRadius: 20,
-    paddingVertical: 16,
-    paddingHorizontal: 32,
-    marginBottom: 32,
+  topBar: {
+    paddingHorizontal: 24,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1a1a2e',
   },
   stateText: {
     color: '#e94560',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
   },
-  targetText: {
+  topMeta: {
+    flexDirection: 'row',
+    gap: 16,
+    marginTop: 4,
+  },
+  metaText: {
     color: '#a0a0b0',
-    fontSize: 16,
-    marginBottom: 16,
+    fontSize: 13,
   },
-  totalText: {
-    color: '#fff',
-    fontSize: 48,
-    fontWeight: 'bold',
-    marginBottom: 24,
+  chatScroll: {
+    flex: 1,
   },
-  setsContainer: {
+  chatContent: {
+    padding: 16,
+    paddingBottom: 96, // leave room above the pinned input
     gap: 8,
-    marginBottom: 24,
   },
-  setText: {
-    color: '#a0a0b0',
-    fontSize: 16,
+  bubbleWrapUser: {
+    alignItems: 'flex-end',
+    maxWidth: '100%',
+  },
+  bubbleWrapCoach: {
+    alignItems: 'flex-start',
+    maxWidth: '100%',
+  },
+  bubbleUser: {
+    backgroundColor: '#2a2a3e',
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    maxWidth: '80%',
+  },
+  bubbleCoach: {
+    backgroundColor: '#1a1a2e',
+    borderColor: '#e94560',
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    maxWidth: '80%',
+    minWidth: 44, // give the spinner some room
+  },
+  bubbleTextUser: {
+    color: '#fff',
+    fontSize: 15,
+    lineHeight: 20,
+  },
+  bubbleTextCoach: {
+    color: '#fff',
+    fontSize: 15,
+    lineHeight: 20,
+  },
+  caret: {
+    color: '#e94560',
+    fontSize: 15,
   },
   inputRow: {
     flexDirection: 'row',
     gap: 8,
     position: 'absolute',
-    bottom: 40,
-    left: 24,
-    right: 24,
+    bottom: 24,
+    left: 16,
+    right: 16,
   },
   textInput: {
     flex: 1,
