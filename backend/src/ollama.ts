@@ -247,7 +247,7 @@ export function createOllamaClient(baseUrl: string, model: string, auth?: Ollama
       try {
         const response = await fetch(`${baseUrl}/api/chat`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...authHeaders },
           signal: AbortSignal.timeout(15000),
           body: JSON.stringify({
             model,
