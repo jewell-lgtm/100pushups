@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { getDatabase } from '../src/db/getDatabase';
-import { parseDailyTargets } from '../src/db/repository';
+import { createRepository, parseDailyTargets } from '../src/db/repository';
+import { IApiClient } from '../src/api/client';
+import { getApiClient } from '../src/api/getApiClient';
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
@@ -15,20 +17,39 @@ interface PlanData {
 
 export default function PlanScreen() {
   const [plan, setPlan] = useState<PlanData | null>(null);
+  // Bumped after a successful generate so the read-effect re-runs and
+  // the screen re-renders the freshly-mirrored row from local SQLite.
+  const [reloadKey, setReloadKey] = useState(0);
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // API + repo are loaded post-mount the same way `app/workout.tsx`
+  // does it — keeps the screen renderable before the singletons resolve.
+  const [api, setApi] = useState<IApiClient | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [repo, setRepo] = useState<any>(null);
 
   useEffect(() => {
     (async () => {
-    const db = await getDatabase();
-    db.getFirstAsync<{
-      week_start: string;
-      evaluation_reps: number | null;
-      daily_targets: string;
-      notes: string | null;
-    }>(
-      `SELECT week_start, evaluation_reps, daily_targets, notes
-       FROM weekly_plans WHERE exercise_id = 'pushups'
-       ORDER BY week_start DESC LIMIT 1`,
-    ).then((row) => {
+      const [db, client] = await Promise.all([getDatabase(), getApiClient()]);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setRepo(createRepository(db as any));
+      setApi(client);
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const db = await getDatabase();
+      const row = await db.getFirstAsync<{
+        week_start: string;
+        evaluation_reps: number | null;
+        daily_targets: string;
+        notes: string | null;
+      }>(
+        `SELECT week_start, evaluation_reps, daily_targets, notes
+         FROM weekly_plans WHERE exercise_id = 'pushups'
+         ORDER BY week_start DESC LIMIT 1`,
+      );
       if (row) {
         setPlan({
           weekStart: row.week_start,
@@ -37,9 +58,33 @@ export default function PlanScreen() {
           notes: row.notes,
         });
       }
-    });
     })();
-  }, []);
+  }, [reloadKey]);
+
+  const onGenerate = useCallback(async () => {
+    if (!api || !repo || generating) return;
+    setGenerating(true);
+    setError(null);
+    try {
+      const fresh = await api.generateWeeklyPlan({ exerciseId: 'pushups' });
+      await repo.upsertWeeklyPlan({
+        id: fresh.id,
+        exerciseId: 'pushups',
+        weekStart: fresh.weekStart,
+        dailyTargets: fresh.dailyTargets,
+        notes: fresh.notes,
+      });
+      setReloadKey((k) => k + 1);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('generateWeeklyPlan failed', err);
+      setError("Couldn't generate plan — check your backend connection");
+    } finally {
+      setGenerating(false);
+    }
+  }, [api, repo, generating]);
+
+  const buttonDisabled = generating || !api || !repo;
 
   if (!plan) {
     return (
@@ -47,6 +92,19 @@ export default function PlanScreen() {
         <Text style={styles.empty}>
           No plan yet. Complete your first evaluation to generate a weekly plan.
         </Text>
+        <TouchableOpacity
+          testID="plan-generate-button"
+          style={[styles.generateButton, buttonDisabled && styles.generateButtonDisabled]}
+          onPress={onGenerate}
+          disabled={buttonDisabled}
+        >
+          {generating ? (
+            <ActivityIndicator color="#fff" testID="plan-generate-spinner" />
+          ) : (
+            <Text style={styles.generateButtonText}>Generate plan</Text>
+          )}
+        </TouchableOpacity>
+        {error && <Text style={styles.error}>{error}</Text>}
       </View>
     );
   }
@@ -88,6 +146,20 @@ export default function PlanScreen() {
       {plan.notes && (
         <Text style={styles.notes}>{plan.notes}</Text>
       )}
+
+      <TouchableOpacity
+        testID="plan-generate-button"
+        style={[styles.generateButton, buttonDisabled && styles.generateButtonDisabled]}
+        onPress={onGenerate}
+        disabled={buttonDisabled}
+      >
+        {generating ? (
+          <ActivityIndicator color="#fff" testID="plan-generate-spinner" />
+        ) : (
+          <Text style={styles.generateButtonText}>Generate plan</Text>
+        )}
+      </TouchableOpacity>
+      {error && <Text style={styles.error}>{error}</Text>}
     </View>
   );
 }
@@ -104,6 +176,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlign: 'center',
     marginTop: 40,
+    marginBottom: 24,
   },
   weekLabel: {
     color: '#fff',
@@ -149,6 +222,30 @@ const styles = StyleSheet.create({
     color: '#a0a0b0',
     fontSize: 13,
     marginTop: 24,
+    textAlign: 'center',
+  },
+  generateButton: {
+    marginTop: 24,
+    backgroundColor: '#e94560',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+    minWidth: 180,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  generateButtonDisabled: {
+    opacity: 0.6,
+  },
+  generateButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  error: {
+    color: '#ffb4b4',
+    fontSize: 13,
+    marginTop: 12,
     textAlign: 'center',
   },
 });
