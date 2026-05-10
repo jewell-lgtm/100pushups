@@ -9,33 +9,34 @@ export function planningRoutes(db: Database.Database, ollamaUrl: string, model: 
   app.post('/weekly', async (c) => {
     const body = await c.req.json<{ exerciseId?: string }>();
     const exerciseId = body.exerciseId ?? 'pushups';
+    const deviceId = c.get('deviceId' as never) as string;
 
     // Get this week's sessions with feedback
     const weeklyHistory = db.prepare(`
       SELECT date(started_at) as date, total_reps, user_feedback
       FROM sessions
-      WHERE exercise_id = ? AND started_at >= date('now', '-7 days')
+      WHERE exercise_id = ? AND device_id = ? AND started_at >= date('now', '-7 days')
       ORDER BY started_at
-    `).all(exerciseId) as Array<{ date: string; total_reps: number; user_feedback: string | null }>;
+    `).all(exerciseId, deviceId) as Array<{ date: string; total_reps: number; user_feedback: string | null }>;
 
     // Get latest evaluation
     const evaluation = db.prepare(`
       SELECT total_reps FROM sessions
-      WHERE exercise_id = ? AND session_type = 'evaluation'
+      WHERE exercise_id = ? AND device_id = ? AND session_type = 'evaluation'
       ORDER BY started_at DESC LIMIT 1
-    `).get(exerciseId) as { total_reps: number } | undefined;
+    `).get(exerciseId, deviceId) as { total_reps: number } | undefined;
 
     // Get previous plan
     const previousPlan = db.prepare(`
       SELECT daily_targets FROM weekly_plans
-      WHERE exercise_id = ? ORDER BY week_start DESC LIMIT 1
-    `).get(exerciseId) as { daily_targets: string } | undefined;
+      WHERE exercise_id = ? AND device_id = ? ORDER BY week_start DESC LIMIT 1
+    `).get(exerciseId, deviceId) as { daily_targets: string } | undefined;
 
     // Get streak
     const streakRows = db.prepare(`
       SELECT DISTINCT date(started_at) as d FROM sessions
-      WHERE exercise_id = ? ORDER BY d DESC
-    `).all(exerciseId) as Array<{ d: string }>;
+      WHERE exercise_id = ? AND device_id = ? ORDER BY d DESC
+    `).all(exerciseId, deviceId) as Array<{ d: string }>;
 
     let streak = 0;
     const today = new Date();
@@ -70,9 +71,9 @@ export function planningRoutes(db: Database.Database, ollamaUrl: string, model: 
 
     const planId = crypto.randomUUID();
     db.prepare(`
-      INSERT INTO weekly_plans (id, exercise_id, week_start, evaluation_reps, daily_targets, notes)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(planId, exerciseId, weekStart, evaluation?.total_reps ?? null, JSON.stringify(plan.dailyTargets), plan.notes);
+      INSERT INTO weekly_plans (id, exercise_id, week_start, evaluation_reps, daily_targets, notes, device_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(planId, exerciseId, weekStart, evaluation?.total_reps ?? null, JSON.stringify(plan.dailyTargets), plan.notes, deviceId);
 
     return c.json({
       id: planId,
