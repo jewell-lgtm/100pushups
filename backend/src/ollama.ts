@@ -160,14 +160,26 @@ export interface IOllamaClient {
   voiceRespond(transcript: string, context: VoiceContext): Promise<OllamaResponse>;
 }
 
-export function createOllamaClient(baseUrl: string, model: string): IOllamaClient {
+export interface OllamaAuth {
+  user: string;
+  password: string;
+}
+
+function authHeaderFromAuth(auth?: OllamaAuth): Record<string, string> {
+  if (!auth) return {};
+  const encoded = Buffer.from(`${auth.user}:${auth.password}`, 'utf8').toString('base64');
+  return { Authorization: `Basic ${encoded}` };
+}
+
+export function createOllamaClient(baseUrl: string, model: string, auth?: OllamaAuth): IOllamaClient {
+  const authHeaders = authHeaderFromAuth(auth);
   return {
     async voiceRespond(transcript: string, context: VoiceContext): Promise<OllamaResponse> {
       const systemPrompt = buildSystemPrompt(context);
 
       const response = await fetch(`${baseUrl}/api/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         signal: AbortSignal.timeout(15000),
         body: JSON.stringify({
           model,
@@ -220,7 +232,9 @@ export async function generateWeeklyPlan(
     currentStreak: number;
     previousTargets: Record<string, number> | null;
   },
+  auth?: OllamaAuth,
 ): Promise<{ dailyTargets: Record<string, number>; notes: string }> {
+  const authHeaders = authHeaderFromAuth(auth);
   const prompt = `You are a fitness coach creating a weekly pushup plan.
 
 Rules:
@@ -247,7 +261,7 @@ Respond with ONLY valid JSON in this format:
 
   const response = await fetch(`${baseUrl}/api/generate`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders },
     body: JSON.stringify({
       model,
       prompt,

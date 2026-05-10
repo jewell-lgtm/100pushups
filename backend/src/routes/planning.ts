@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
 import type Database from 'better-sqlite3';
 import crypto from 'node:crypto';
-import { generateWeeklyPlan } from '../ollama.js';
+import { generateWeeklyPlan, OllamaAuth } from '../ollama.js';
 
-export function planningRoutes(db: Database.Database, ollamaUrl: string, model: string) {
+export function planningRoutes(db: Database.Database, ollamaUrl: string, model: string, ollamaAuth?: OllamaAuth) {
   const app = new Hono();
 
   app.post('/weekly', async (c) => {
@@ -58,7 +58,7 @@ export function planningRoutes(db: Database.Database, ollamaUrl: string, model: 
       })),
       currentStreak: streak,
       previousTargets: previousPlan ? JSON.parse(previousPlan.daily_targets) : null,
-    });
+    }, ollamaAuth);
 
     // Calculate next Monday
     const now = new Date();
