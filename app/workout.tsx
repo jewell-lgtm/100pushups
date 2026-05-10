@@ -5,10 +5,9 @@ import { getDatabase } from '../src/db/getDatabase';
 import { createRepository } from '../src/db/repository';
 import { createTTSManager } from '../src/voice/TTSManager';
 import { createVoiceManager, VoiceEngine } from '../src/voice/VoiceManager';
-import { createApiClient } from '../src/api/client';
+import { IApiClient } from '../src/api/client';
+import { getApiClient } from '../src/api/getApiClient';
 import { useWorkoutSession } from '../src/hooks/useWorkoutSession';
-
-const API_BASE = __DEV__ ? 'http://localhost:3000' : 'http://pushups.wire.mattjewell.co.uk';
 
 function createPlaceholderEngine(): VoiceEngine & {
   simulateResults(results: string[]): void;
@@ -40,15 +39,22 @@ export default function WorkoutScreen() {
   if (!engineRef.current) engineRef.current = createPlaceholderEngine();
   const voiceRef = useRef<ReturnType<typeof createVoiceManager> | null>(null);
   if (!voiceRef.current) voiceRef.current = createVoiceManager(engineRef.current);
-  const apiRef = useRef<ReturnType<typeof createApiClient> | null>(null);
-  if (!apiRef.current) apiRef.current = createApiClient(API_BASE);
+  const apiRef = useRef<IApiClient | null>(null);
   const dbRef = useRef<any>(null);
   const repoRef = useRef<any>(null);
+
+  // Stable stub used until the real API client is loaded post-mount.
+  // Voice calls in those first few ms will throw and the hook will fall
+  // back to FallbackParser — that's fine.
+  const stubApi: IApiClient = {
+    voiceRespond: async () => { throw new Error('api not ready'); },
+    isReachable: async () => false,
+  };
 
   const { state, startSession } = useWorkoutSession({
     tts: ttsRef.current!,
     voice: voiceRef.current!,
-    api: apiRef.current!,
+    api: apiRef.current ?? stubApi,
     repo: repoRef.current ?? {
       buildVoiceContext: async () => ({ todayTarget: null, yesterdayTotal: null, personalBest: null, streak: 0, sessionType: 'regular' as const }),
       insertSession: async () => {},
@@ -60,9 +66,10 @@ export default function WorkoutScreen() {
 
   useEffect(() => {
     (async () => {
-      const db = await getDatabase();
+      const [db, api] = await Promise.all([getDatabase(), getApiClient()]);
       dbRef.current = db;
       repoRef.current = createRepository(db as any);
+      apiRef.current = api;
       setReady(true);
     })();
   }, []);

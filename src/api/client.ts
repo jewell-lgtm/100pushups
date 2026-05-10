@@ -5,13 +5,31 @@ export interface IApiClient {
   isReachable(): Promise<boolean>;
 }
 
-export function createApiClient(baseUrl: string): IApiClient {
+export interface ApiClientOptions {
+  authHeader?: string;
+}
+
+export class AuthError extends Error {
+  constructor(public status: number) {
+    super(`auth error: ${status}`);
+    this.name = 'AuthError';
+  }
+}
+
+export function createApiClient(baseUrl: string, options: ApiClientOptions = {}): IApiClient {
+  const authHeaders: Record<string, string> = options.authHeader
+    ? { Authorization: options.authHeader }
+    : {};
+
   async function fetchJson<T>(path: string, body: unknown): Promise<T> {
     const response = await fetch(`${baseUrl}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders },
       body: JSON.stringify(body),
     });
+    if (response.status === 401 || response.status === 403) {
+      throw new AuthError(response.status);
+    }
     if (!response.ok) {
       throw new Error(`API error: ${response.status}`);
     }
@@ -26,6 +44,7 @@ export function createApiClient(baseUrl: string): IApiClient {
     async isReachable(): Promise<boolean> {
       try {
         const response = await fetch(`${baseUrl}/health`, {
+          headers: authHeaders,
           signal: AbortSignal.timeout(2000),
         });
         return response.ok;
