@@ -12,6 +12,9 @@ import { IApiClient, normalizeToolCall } from '../api/client';
 import { IRepository } from '../db/repository';
 import { AppState, ToolCall, VoiceContext, VoiceResponse } from '../api/types';
 import { fallbackParse } from '../voice/FallbackParser';
+import { ChatMessage, runChatExchange } from './chatLog';
+
+export type { ChatMessage, ChatRole, ChatStatus } from './chatLog';
 
 // Which tool names are valid in each app state. Used to filter out
 // LLM hallucinations (e.g. complete_set issued from between_sets).
@@ -39,6 +42,7 @@ export function useWorkoutSession({
   exerciseId,
 }: UseWorkoutSessionOptions) {
   const [state, setState] = useState<WorkoutSessionState>(INITIAL_STATE);
+  const [chatLog, setChatLog] = useState<ChatMessage[]>([]);
   const stateRef = useRef(state);
   stateRef.current = state;
   const sessionIdRef = useRef<string | null>(null);
@@ -77,7 +81,6 @@ export function useWorkoutSession({
             }
             break;
           case 'NAVIGATE_HOME':
-            // Caller handles this via state.appState check
             break;
         }
       }
@@ -100,6 +103,12 @@ export function useWorkoutSession({
     async (transcript: string) => {
       const s = stateRef.current;
 
+      // If TTS is mid-speech when a new utterance lands, cut it off so the
+      // chat UI's bubble lifecycle doesn't lag behind audio.
+      if (tts.isSpeaking()) {
+        tts.cancel();
+      }
+
       const voiceContext: VoiceContext = {
         appState: s.appState,
         currentSet: s.currentSetStartedAt
@@ -107,21 +116,21 @@ export function useWorkoutSession({
           : null,
         setsCompleted: s.setsCompleted,
         todayTarget: s.targetReps,
-        yesterdayTotal: null, // filled by repo on session start
+        yesterdayTotal: null,
         personalBest: null,
         streak: 0,
         sessionType: 'regular',
       };
 
-      let response: VoiceResponse;
-      try {
-        response = await api.voiceRespond({
-          transcript,
-          context: voiceContext,
-        });
-      } catch {
-        response = fallbackParse(transcript, s.appState, s.targetReps);
-      }
+      let response: VoiceResponse = await runChatExchange({
+        api,
+        transcript,
+        context: voiceContext,
+        appState: s.appState,
+        targetReps: s.targetReps,
+        setLog: setChatLog,
+        newId: () => Crypto.randomUUID(),
+      });
 
       // Filter out tool calls the LLM hallucinated for the current state.
       // Small models (e.g. llama3.2:3b) sometimes return complete_set from
@@ -137,6 +146,17 @@ export function useWorkoutSession({
           validCalls.push(...fallbackValid);
           if (fallback.spokenResponse) {
             response = { ...response, spokenResponse: fallback.spokenResponse };
+            // Keep the chat bubble in sync with what TTS will actually say.
+            setChatLog((log) => {
+              for (let i = log.length - 1; i >= 0; i--) {
+                if (log[i].role === 'coach') {
+                  return log.map((m, idx) =>
+                    idx === i ? { ...m, text: fallback.spokenResponse, status: 'final' as const } : m,
+                  );
+                }
+              }
+              return log;
+            });
           }
         }
       }
@@ -147,7 +167,8 @@ export function useWorkoutSession({
         await dispatch({ type: 'TOOL_CALL', toolCall: normalizeToolCall(toolCall) });
       }
 
-      // Speak the response
+      // Speak only the final spokenResponse — partial tokens would clip
+      // mid-word at Ollama's chunk size.
       if (response.spokenResponse) {
         await tts.speak(response.spokenResponse);
       }
@@ -180,7 +201,6 @@ export function useWorkoutSession({
       userFeedback: null,
     });
 
-    // Build greeting
     const parts: string[] = [];
     if (context.yesterdayTotal !== null) {
       parts.push(`Yesterday you did ${context.yesterdayTotal} reps.`);
@@ -197,6 +217,15 @@ export function useWorkoutSession({
     parts.push('Say ready when you want to start.');
 
     const greeting = parts.join(' ');
+    setChatLog((log) => [
+      ...log,
+      {
+        id: Crypto.randomUUID(),
+        role: 'coach',
+        text: greeting,
+        status: 'final',
+      },
+    ]);
     await tts.speak(greeting);
     await dispatch({ type: 'GREETING_DONE' });
   }, [repo, exerciseId, tts, dispatch]);
@@ -213,6 +242,7 @@ export function useWorkoutSession({
 
   return {
     state,
+    chatLog,
     startSession,
   };
 }

@@ -11,6 +11,8 @@ interface QueueItem {
 export interface ITTSManager {
   speak(text: string, priority?: Priority): Promise<void>;
   stop(): void;
+  /** Cancel any in-flight utterance; alias of stop() with intent. */
+  cancel(): void;
   isSpeaking(): boolean;
 }
 
@@ -60,6 +62,12 @@ export function createTTSManager(): ITTSManager {
     },
 
     stop() {
+      Speech.stop();
+      speaking = false;
+      queue.length = 0;
+    },
+
+    cancel() {
       Speech.stop();
       speaking = false;
       queue.length = 0;
