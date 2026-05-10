@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pushup-api
+  namespace: pushups
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pushup-api
+  template:
+    metadata:
+      labels:
+        app: pushup-api
+    spec:
+      containers:
+      - name: pushup-api
+        image: registry.registry.svc.cluster.local:5000/pushup-api:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: PORT
+          value: "3000"
+        - name: DATA_DIR
+          value: "/data"
+        - name: OLLAMA_URL
+          value: "http://192.168.86.97:11434"
+        - name: OLLAMA_MODEL
+          value: "llama3.2:3b"
+        resources:
+          requests:
+            memory: 64Mi
+            cpu: 50m
+          limits:
+            memory: 256Mi
+            cpu: 250m
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: pushup-api-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pushup-api-data
+  namespace: pushups
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

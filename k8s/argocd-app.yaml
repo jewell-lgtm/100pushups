@@ -1,0 +1,29 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pushups
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/jewell-lgtm/100pushups.git
+    targetRevision: main
+    path: k8s
+    kustomize: {}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pushups
+  ignoreDifferences:
+    - group: argoproj.io
+      kind: Application
+      name: pushups
+      namespace: argocd
+      jsonPointers:
+        - /spec/source/kustomize/images
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - RespectIgnoreDifferences=true

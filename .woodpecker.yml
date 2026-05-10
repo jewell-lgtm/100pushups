@@ -1,0 +1,51 @@
+workspace:
+  base: /woodpecker
+  path: src
+
+variables:
+  - &kaniko_image gcr.io/kaniko-project/executor:v1.23.2-debug
+  - &node_image node:22-alpine
+
+steps:
+  - name: test-backend
+    image: *node_image
+    commands:
+      - cd backend
+      - npm ci
+      - npm test
+
+  - name: test-app
+    image: *node_image
+    commands:
+      - npm ci --legacy-peer-deps
+      - npm test
+
+  - name: build-api
+    image: *kaniko_image
+    commands:
+      - >
+        SHORT_SHA=$(printf '%s' "$CI_COMMIT_SHA" | cut -c1-8);
+        DESTINATIONS="--destination=registry.registry.svc.cluster.local:5000/pushup-api:$SHORT_SHA";
+        if [ "$CI_COMMIT_BRANCH" = "main" ]; then
+          DESTINATIONS="$DESTINATIONS --destination=registry.registry.svc.cluster.local:5000/pushup-api:latest";
+        fi;
+        /kaniko/executor
+        --context=dir:///woodpecker/src/backend
+        --dockerfile=Dockerfile
+        $DESTINATIONS
+        --cache=true
+        --cache-repo=registry.registry.svc.cluster.local:5000/pushup-api-cache
+        --use-new-run
+        --compressed-caching=false
+        --insecure
+        --insecure-pull
+
+  - name: verify-image
+    image: alpine:3.20
+    commands:
+      - apk add --no-cache curl jq
+      - SHORT_SHA=$(printf '%s' "$CI_COMMIT_SHA" | cut -c1-8)
+      - TAGS="$(curl -fsS http://registry.registry.svc.cluster.local:5000/v2/pushup-api/tags/list)"
+      - 'printf "%s" "$TAGS" | jq -e --arg TAG "$SHORT_SHA" ''.tags | index($TAG)'' >/dev/null && echo "pushup-api:$SHORT_SHA pushed"'
+    when:
+      branch: main
