@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { stream } from 'hono/streaming';
-import { IOllamaClient, VoiceContext, OllamaResponse } from '../ollama.js';
+import { IOllamaClient, VoiceContext, OllamaResponse, StreamFrame } from '../ollama.js';
 import { generateSpokenResponse } from '../voiceFallback.js';
 
 interface VoiceRequest {
@@ -46,29 +46,29 @@ export function voiceRoutes(ollama: IOllamaClient) {
     c.header('X-Accel-Buffering', 'no');
 
     return stream(c, async (s) => {
-      const tokenFrame = (text: string) =>
-        s.write(JSON.stringify({ type: 'token', text }) + '\n');
+      let doneFrame: StreamFrame & { type: 'done' } = { type: 'done', toolCalls: [], spokenResponse: '' };
 
-      let result: OllamaResponse;
       try {
-        result = await ollama.voiceRespondStream(body.transcript, body.context, (delta) => {
-          // Fire-and-forget: write order is preserved by the underlying writer.
-          void tokenFrame(delta);
-        });
+        for await (const frame of ollama.voiceRespondStream(body.transcript, body.context)) {
+          if (frame.type === 'done') {
+            doneFrame = frame;
+          } else {
+            await s.write(JSON.stringify(frame) + '\n');
+          }
+        }
       } catch (err) {
         console.error('Ollama stream error, returning fallback:', err instanceof Error ? err.message : err);
-        result = { toolCalls: [], spokenResponse: '' };
       }
 
-      if (!result.spokenResponse && result.toolCalls.length > 0) {
-        result.spokenResponse = generateSpokenResponse(result.toolCalls, body.context);
+      // Synthesize a spoken response if the LLM gave tools but no content.
+      if (!doneFrame.spokenResponse && doneFrame.toolCalls.length > 0) {
+        doneFrame = {
+          ...doneFrame,
+          spokenResponse: generateSpokenResponse(doneFrame.toolCalls, body.context),
+        };
       }
 
-      await s.write(JSON.stringify({
-        type: 'done',
-        toolCalls: result.toolCalls,
-        spokenResponse: result.spokenResponse,
-      }) + '\n');
+      await s.write(JSON.stringify(doneFrame) + '\n');
     });
   });
 

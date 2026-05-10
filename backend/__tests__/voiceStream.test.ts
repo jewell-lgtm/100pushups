@@ -1,4 +1,4 @@
-import { createOllamaClient, IOllamaClient, VoiceContext, OllamaResponse } from '../src/ollama.js';
+import { createOllamaClient, IOllamaClient, VoiceContext, StreamFrame } from '../src/ollama.js';
 import { generateSpokenResponse } from '../src/voiceFallback.js';
 import { voiceRoutes } from '../src/routes/voice.js';
 
@@ -32,12 +32,26 @@ function ndjsonStream(lines: string[]): ReadableStream<Uint8Array> {
   });
 }
 
+// Drain the generator into separate tokens and the final done frame.
+async function drain(
+  gen: AsyncGenerator<StreamFrame, void, void>,
+): Promise<{ tokens: string[]; done: StreamFrame & { type: 'done' } }> {
+  const tokens: string[] = [];
+  let done: (StreamFrame & { type: 'done' }) | null = null;
+  for await (const frame of gen) {
+    if (frame.type === 'token') tokens.push(frame.text);
+    else done = frame;
+  }
+  if (!done) throw new Error('generator finished without a done frame');
+  return { tokens, done };
+}
+
 describe('voiceRespondStream', () => {
   beforeEach(() => {
     mockFetch.mockReset();
   });
 
-  it('streams content tokens and resolves with accumulated response', async () => {
+  it('streams content tokens and yields a done frame with accumulated response', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       body: ndjsonStream([
@@ -48,11 +62,10 @@ describe('voiceRespondStream', () => {
     });
 
     const client = createOllamaClient('http://localhost:11434', 'llama3.2:3b');
-    const tokens: string[] = [];
-    const result = await client.voiceRespondStream('hello', makeContext(), (t) => tokens.push(t));
+    const { tokens, done } = await drain(client.voiceRespondStream('hello', makeContext()));
 
     expect(tokens).toEqual(['Hi', ' there']);
-    expect(result).toEqual({ toolCalls: [], spokenResponse: 'Hi there' });
+    expect(done).toEqual({ type: 'done', toolCalls: [], spokenResponse: 'Hi there' });
 
     const fetchCall = mockFetch.mock.calls[0];
     expect(fetchCall[0]).toBe('http://localhost:11434/api/chat');
@@ -62,7 +75,6 @@ describe('voiceRespondStream', () => {
   });
 
   it('handles chunks split across multiple reader frames', async () => {
-    // Simulate one fetch chunk containing partial JSON, the next completing it.
     const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -75,11 +87,10 @@ describe('voiceRespondStream', () => {
     mockFetch.mockResolvedValueOnce({ ok: true, body: stream });
 
     const client = createOllamaClient('http://localhost:11434', 'llama3.2:3b');
-    const tokens: string[] = [];
-    const result = await client.voiceRespondStream('hello', makeContext(), (t) => tokens.push(t));
+    const { tokens, done } = await drain(client.voiceRespondStream('hello', makeContext()));
 
     expect(tokens).toEqual(['Hi', ' there']);
-    expect(result.spokenResponse).toBe('Hi there');
+    expect(done.spokenResponse).toBe('Hi there');
   });
 
   it('captures tool_calls emitted on the final frame', async () => {
@@ -98,13 +109,13 @@ describe('voiceRespondStream', () => {
     });
 
     const client = createOllamaClient('http://localhost:11434', 'llama3.2:3b');
-    const result = await client.voiceRespondStream('ready', makeContext(), () => {});
+    const { done } = await drain(client.voiceRespondStream('ready', makeContext()));
 
-    expect(result.toolCalls).toEqual([{ name: 'start_set', params: {} }]);
-    expect(result.spokenResponse).toBe('Go!');
+    expect(done.toolCalls).toEqual([{ name: 'start_set', params: {} }]);
+    expect(done.spokenResponse).toBe('Go!');
   });
 
-  it('returns toolCalls with empty content (route falls back via generateSpokenResponse)', async () => {
+  it('yields toolCalls with empty content (route falls back via generateSpokenResponse)', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       body: ndjsonStream([
@@ -119,46 +130,42 @@ describe('voiceRespondStream', () => {
     });
 
     const client = createOllamaClient('http://localhost:11434', 'llama3.2:3b');
-    const tokens: string[] = [];
-    const result = await client.voiceRespondStream('ready', makeContext(), (t) => tokens.push(t));
+    const { tokens, done } = await drain(client.voiceRespondStream('ready', makeContext()));
 
     expect(tokens).toEqual([]);
-    expect(result.toolCalls).toEqual([{ name: 'start_set', params: {} }]);
-    expect(result.spokenResponse).toBe('');
-
-    // The route layer composes the fallback; verify that helper does the right thing.
-    expect(generateSpokenResponse(result.toolCalls, makeContext())).toBe('Go!');
+    expect(done.toolCalls).toEqual([{ name: 'start_set', params: {} }]);
+    expect(done.spokenResponse).toBe('');
+    expect(generateSpokenResponse(done.toolCalls, makeContext())).toBe('Go!');
   });
 
-  it('returns empty fallback on Ollama 500', async () => {
+  it('yields empty fallback done frame on Ollama 500', async () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 500, body: null });
 
     const client = createOllamaClient('http://localhost:11434', 'llama3.2:3b');
-    const tokens: string[] = [];
-    const result = await client.voiceRespondStream('ready', makeContext(), (t) => tokens.push(t));
+    const { tokens, done } = await drain(client.voiceRespondStream('ready', makeContext()));
 
     expect(tokens).toEqual([]);
-    expect(result).toEqual({ toolCalls: [], spokenResponse: '' });
+    expect(done).toEqual({ type: 'done', toolCalls: [], spokenResponse: '' });
   });
 
-  it('returns empty fallback on fetch network error', async () => {
+  it('yields empty fallback done frame on fetch network error', async () => {
     mockFetch.mockRejectedValueOnce(new Error('network down'));
 
     const client = createOllamaClient('http://localhost:11434', 'llama3.2:3b');
-    const result = await client.voiceRespondStream('ready', makeContext(), () => {});
+    const { done } = await drain(client.voiceRespondStream('ready', makeContext()));
 
-    expect(result).toEqual({ toolCalls: [], spokenResponse: '' });
+    expect(done).toEqual({ type: 'done', toolCalls: [], spokenResponse: '' });
   });
 
   it('route emits NDJSON token frames followed by a single done frame', async () => {
     const fakeClient: IOllamaClient = {
-      async voiceRespond(): Promise<OllamaResponse> {
+      async voiceRespond() {
         return { toolCalls: [], spokenResponse: '' };
       },
-      async voiceRespondStream(_t, _c, onToken): Promise<OllamaResponse> {
-        onToken('Hello');
-        onToken(' world');
-        return { toolCalls: [], spokenResponse: 'Hello world' };
+      async *voiceRespondStream(): AsyncGenerator<StreamFrame, void, void> {
+        yield { type: 'token', text: 'Hello' };
+        yield { type: 'token', text: ' world' };
+        yield { type: 'done', toolCalls: [], spokenResponse: 'Hello world' };
       },
     };
     const app = voiceRoutes(fakeClient);
@@ -180,11 +187,11 @@ describe('voiceRespondStream', () => {
 
   it('route synthesizes spokenResponse from tool calls when LLM returned none', async () => {
     const fakeClient: IOllamaClient = {
-      async voiceRespond(): Promise<OllamaResponse> {
+      async voiceRespond() {
         return { toolCalls: [], spokenResponse: '' };
       },
-      async voiceRespondStream(): Promise<OllamaResponse> {
-        return { toolCalls: [{ name: 'start_set', params: {} }], spokenResponse: '' };
+      async *voiceRespondStream(): AsyncGenerator<StreamFrame, void, void> {
+        yield { type: 'done', toolCalls: [{ name: 'start_set', params: {} }], spokenResponse: '' };
       },
     };
     const app = voiceRoutes(fakeClient);
@@ -203,11 +210,11 @@ describe('voiceRespondStream', () => {
 
   it('route returns 400 when body is missing fields', async () => {
     const fakeClient: IOllamaClient = {
-      async voiceRespond(): Promise<OllamaResponse> {
+      async voiceRespond() {
         return { toolCalls: [], spokenResponse: '' };
       },
-      async voiceRespondStream(): Promise<OllamaResponse> {
-        return { toolCalls: [], spokenResponse: '' };
+      async *voiceRespondStream(): AsyncGenerator<StreamFrame, void, void> {
+        yield { type: 'done', toolCalls: [], spokenResponse: '' };
       },
     };
     const app = voiceRoutes(fakeClient);
@@ -231,10 +238,9 @@ describe('voiceRespondStream', () => {
     });
 
     const client = createOllamaClient('http://localhost:11434', 'llama3.2:3b');
-    const tokens: string[] = [];
-    const result = await client.voiceRespondStream('hello', makeContext(), (t) => tokens.push(t));
+    const { tokens, done } = await drain(client.voiceRespondStream('hello', makeContext()));
 
     expect(tokens).toEqual(['A', 'B']);
-    expect(result.spokenResponse).toBe('AB');
+    expect(done.spokenResponse).toBe('AB');
   });
 });

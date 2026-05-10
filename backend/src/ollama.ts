@@ -156,13 +156,16 @@ function buildSystemPrompt(context: VoiceContext): string {
   return lines.join('\n');
 }
 
+export type StreamFrame =
+  | { type: 'token'; text: string }
+  | { type: 'done'; toolCalls: ToolCall[]; spokenResponse: string };
+
 export interface IOllamaClient {
   voiceRespond(transcript: string, context: VoiceContext): Promise<OllamaResponse>;
   voiceRespondStream(
     transcript: string,
     context: VoiceContext,
-    onToken: (text: string) => void,
-  ): Promise<OllamaResponse>;
+  ): AsyncGenerator<StreamFrame, void, void>;
 }
 
 interface OllamaStreamFrame {
@@ -235,94 +238,105 @@ export function createOllamaClient(baseUrl: string, model: string, auth?: Ollama
       };
     },
 
-    async voiceRespondStream(
+    voiceRespondStream(
       transcript: string,
       context: VoiceContext,
-      onToken: (text: string) => void,
-    ): Promise<OllamaResponse> {
-      const systemPrompt = buildSystemPrompt(context);
-      let accumulated = '';
-      const toolCalls: ToolCall[] = [];
-
-      try {
-        const response = await fetch(`${baseUrl}/api/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders },
-          signal: AbortSignal.timeout(15000),
-          body: JSON.stringify({
-            model,
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: transcript },
-            ],
-            tools: TOOLS,
-            stream: true,
-            options: {
-              temperature: 0.7,
-              num_predict: 80,
-            },
-          }),
-        });
-
-        if (!response.ok || !response.body) {
-          return { toolCalls: [], spokenResponse: '' };
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        // NDJSON loop: split on \n; keep the trailing partial line in buffer.
-        while (true) {
-          const { value, done } = await reader.read();
-          if (value) {
-            buffer += decoder.decode(value, { stream: true });
-            let nl = buffer.indexOf('\n');
-            while (nl !== -1) {
-              const line = buffer.slice(0, nl).trim();
-              buffer = buffer.slice(nl + 1);
-              if (line) processFrame(line, toolCalls, (delta) => {
-                accumulated += delta;
-                onToken(delta);
-              });
-              nl = buffer.indexOf('\n');
-            }
-          }
-          if (done) break;
-        }
-        // Flush any final non-newline-terminated frame.
-        const tail = buffer.trim();
-        if (tail) processFrame(tail, toolCalls, (delta) => {
-          accumulated += delta;
-          onToken(delta);
-        });
-      } catch {
-        return { toolCalls: [], spokenResponse: '' };
-      }
-
-      return { toolCalls, spokenResponse: accumulated.trim() };
+    ): AsyncGenerator<StreamFrame, void, void> {
+      return streamOllama(baseUrl, model, authHeaders, transcript, context);
     },
   };
 }
 
-function processFrame(
-  line: string,
-  toolCalls: ToolCall[],
-  emit: (delta: string) => void,
-): void {
+async function* streamOllama(
+  baseUrl: string,
+  model: string,
+  authHeaders: Record<string, string>,
+  transcript: string,
+  context: VoiceContext,
+): AsyncGenerator<StreamFrame, void, void> {
+  const systemPrompt = buildSystemPrompt(context);
+  let accumulated = '';
+  const toolCalls: ToolCall[] = [];
+
+  try {
+    const response = await fetch(`${baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders },
+      signal: AbortSignal.timeout(15000),
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: transcript },
+        ],
+        tools: TOOLS,
+        stream: true,
+        options: { temperature: 0.7, num_predict: 80 },
+      }),
+    });
+
+    if (!response.ok || !response.body) {
+      yield { type: 'done', toolCalls: [], spokenResponse: '' };
+      return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    // NDJSON loop: split on \n; keep the trailing partial line in buffer.
+    while (true) {
+      const { value, done } = await reader.read();
+      if (value) {
+        buffer += decoder.decode(value, { stream: true });
+        let nl = buffer.indexOf('\n');
+        while (nl !== -1) {
+          const line = buffer.slice(0, nl).trim();
+          buffer = buffer.slice(nl + 1);
+          if (line) {
+            const delta = parseOllamaFrame(line, toolCalls);
+            if (delta) {
+              accumulated += delta;
+              yield { type: 'token', text: delta };
+            }
+          }
+          nl = buffer.indexOf('\n');
+        }
+      }
+      if (done) break;
+    }
+    // Flush any final non-newline-terminated frame.
+    const tail = buffer.trim();
+    if (tail) {
+      const delta = parseOllamaFrame(tail, toolCalls);
+      if (delta) {
+        accumulated += delta;
+        yield { type: 'token', text: delta };
+      }
+    }
+  } catch {
+    yield { type: 'done', toolCalls: [], spokenResponse: '' };
+    return;
+  }
+
+  yield { type: 'done', toolCalls, spokenResponse: accumulated.trim() };
+}
+
+// Returns the content delta for the frame (or '' if none); appends any
+// tool_calls to the shared array.
+function parseOllamaFrame(line: string, toolCalls: ToolCall[]): string {
   let frame: OllamaStreamFrame;
   try {
     frame = JSON.parse(line) as OllamaStreamFrame;
   } catch {
-    return;
+    return '';
   }
-  const delta = frame.message?.content;
-  if (delta) emit(delta);
   if (frame.message?.tool_calls) {
     for (const tc of frame.message.tool_calls) {
       toolCalls.push({ name: tc.function.name, params: tc.function.arguments });
     }
   }
+  return frame.message?.content ?? '';
 }
 
 // Weekly planning prompt
