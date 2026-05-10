@@ -280,6 +280,41 @@ liveDescribe('Live backend voice harness', () => {
     }, 30_000);
   });
 
+  // Phase 1.5.2 follow-up: exercises bearerAuth middleware end-to-end
+  // against the deployed pod. Gated on TEST_API_BASE so it skips when
+  // there's no backend; the 200-with-bearer case additionally requires
+  // TEST_REGISTER_KEY since a fresh token is needed for each run.
+  describe('auth contract', () => {
+    it('returns 401 on /api/v1/* without a Bearer header', async () => {
+      const res = await fetch(`${API_BASE}/api/v1/workouts/stats`);
+      expect(res.status).toBe(401);
+    });
+
+    it('returns 403 when the bearer signature is tampered', async () => {
+      if (!AUTH_HEADER) {
+        // No live token to tamper — skip rather than 401-pass spuriously.
+        // beforeAll only sets AUTH_HEADER when TEST_REGISTER_KEY is present.
+        return;
+      }
+      // Replace the last 4 chars of the token (the trailing slice of the
+      // HMAC signature). The payload is intact so the middleware will
+      // pass the malformed-check and fail signature verification → 403.
+      const tampered = AUTH_HEADER.slice(0, -4) + 'XXXX';
+      const res = await fetch(`${API_BASE}/api/v1/workouts/stats`, {
+        headers: { Authorization: tampered },
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it('returns 200 on /api/v1/* with a valid bearer', async () => {
+      if (!AUTH_HEADER) return; // gated on TEST_REGISTER_KEY
+      const res = await fetch(`${API_BASE}/api/v1/workouts/stats?exercise=pushups`, {
+        headers: { Authorization: AUTH_HEADER },
+      });
+      expect(res.status).toBe(200);
+    });
+  });
+
   describe('weekly plan generation', () => {
     it('generates a weekly plan from the live LLM', async () => {
       const res = await fetch(`${API_BASE}/api/v1/plan/weekly`, {
