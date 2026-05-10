@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
-import { StyleSheet, Text, View, FlatList } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { RefreshControl, StyleSheet, Text, View, FlatList } from 'react-native';
 import { getDatabase } from '../src/db/getDatabase';
+import { useSync } from '../src/hooks/useSync';
 
 interface SessionRow {
   id: string;
@@ -12,18 +13,34 @@ interface SessionRow {
 
 export default function HistoryScreen() {
   const [sessions, setSessions] = useState<SessionRow[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const { triggerSync } = useSync();
+
+  const loadSessions = useCallback(async () => {
+    const db = await getDatabase();
+    const rows = await db.getAllAsync<SessionRow>(
+      `SELECT id, started_at, total_reps, set_count, session_type
+       FROM sessions WHERE exercise_id = 'pushups'
+       ORDER BY started_at DESC LIMIT 30`,
+    );
+    setSessions(rows);
+  }, []);
 
   useEffect(() => {
-    (async () => {
-      const db = await getDatabase();
-      const rows = await db.getAllAsync<SessionRow>(
-        `SELECT id, started_at, total_reps, set_count, session_type
-         FROM sessions WHERE exercise_id = 'pushups'
-         ORDER BY started_at DESC LIMIT 30`,
-      );
-      setSessions(rows);
-    })();
-  }, []);
+    void loadSessions();
+  }, [loadSessions]);
+
+  // Pull-to-refresh: kick a sync, then re-read local rows so the list
+  // reflects anything the server confirmed in this round-trip.
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await triggerSync();
+      await loadSessions();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [triggerSync, loadSessions]);
 
   return (
     <View style={styles.container}>
@@ -33,6 +50,13 @@ export default function HistoryScreen() {
         <FlatList
           data={sessions}
           keyExtractor={(item) => item.id}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#e94560"
+            />
+          }
           renderItem={({ item }) => (
             <View style={styles.row}>
               <View>

@@ -23,6 +23,10 @@ interface UseWorkoutSessionOptions {
   api: IApiClient;
   repo: IRepository;
   exerciseId: string;
+  // Optional sync trigger called fire-and-forget after SAVE_SESSION
+  // lands. Wired in `app/workout.tsx`; tests omit it to keep the hook
+  // independent from the singleton db/api modules.
+  onSessionSaved?: () => void;
 }
 
 export function useWorkoutSession({
@@ -31,6 +35,7 @@ export function useWorkoutSession({
   api,
   repo,
   exerciseId,
+  onSessionSaved,
 }: UseWorkoutSessionOptions) {
   const [state, setState] = useState<WorkoutSessionState>(INITIAL_STATE);
   const [chatLog, setChatLog] = useState<ChatMessage[]>([]);
@@ -69,6 +74,11 @@ export function useWorkoutSession({
                 setCount: s.setsCompleted.length,
                 userFeedback: s.userFeedback,
               });
+              // Fire-and-forget: don't await — the user is already
+              // navigating home and we don't want to block on the
+              // network round-trip. The sync service handles its own
+              // errors and inflight coalescing.
+              onSessionSaved?.();
             }
             break;
           case 'NAVIGATE_HOME':
@@ -76,7 +86,7 @@ export function useWorkoutSession({
         }
       }
     },
-    [voice, repo],
+    [voice, repo, onSessionSaved],
   );
 
   const dispatch = useCallback(

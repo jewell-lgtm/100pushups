@@ -16,6 +16,7 @@ import { createVoiceManager, VoiceEngine } from '../src/voice/VoiceManager';
 import { IApiClient } from '../src/api/client';
 import { getApiClient } from '../src/api/getApiClient';
 import { useWorkoutSession } from '../src/hooks/useWorkoutSession';
+import { useSync } from '../src/hooks/useSync';
 import type { ChatMessage } from '../src/hooks/chatLog';
 
 function createPlaceholderEngine(): VoiceEngine & {
@@ -65,6 +66,8 @@ export default function WorkoutScreen() {
     isReachable: async () => false,
   };
 
+  const { triggerSync } = useSync();
+
   const { state, chatLog, startSession } = useWorkoutSession({
     tts: ttsRef.current!,
     voice: voiceRef.current!,
@@ -76,6 +79,11 @@ export default function WorkoutScreen() {
       insertSet: async () => {},
     },
     exerciseId: 'pushups',
+    onSessionSaved: () => {
+      // Fire-and-forget — the inflight lock in useSync coalesces with
+      // the foreground listener, and sync errors are caught internally.
+      void triggerSync();
+    },
   });
 
   useEffect(() => {

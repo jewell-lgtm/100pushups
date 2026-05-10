@@ -3,8 +3,13 @@ import { Stack } from 'expo-router';
 import { View } from 'react-native';
 import { AuthGate } from '../src/auth/AuthGate';
 import { ApiStatus } from '../src/components/ApiStatus';
+import { useSync } from '../src/hooks/useSync';
 
 export default function RootLayout() {
+  // Mounted at the root so the AppState listener attaches once and
+  // survives screen navigation. Web is a no-op inside useSync.
+  useSync();
+
   return (
     <AuthGate>
       {/* ApiStatus sits above the Stack so every screen sees the same banner.
