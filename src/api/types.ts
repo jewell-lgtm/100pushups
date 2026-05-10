@@ -79,8 +79,9 @@ export interface VoiceResponse {
 
 // --- API types ---
 
+// Server stamps deviceId from the Bearer-derived auth context, so the
+// client no longer sends it. Bearer header alone identifies the device.
 export interface SyncRequest {
-  deviceId: string;
   sessions: (Session & { sets: WorkoutSet[] })[];
 }
 

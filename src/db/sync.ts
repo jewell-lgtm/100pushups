@@ -5,7 +5,9 @@ export interface ISyncService {
   syncPending(): Promise<number>;
 }
 
-export function createSyncService(db: SQLiteDatabase, api: IApiClient, deviceId: string): ISyncService {
+// deviceId is intentionally absent — the Bearer header on each /sync
+// request identifies the device and the server stamps it server-side.
+export function createSyncService(db: SQLiteDatabase, api: IApiClient): ISyncService {
   return {
     async syncPending(): Promise<number> {
       const reachable = await api.isReachable();
