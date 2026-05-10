@@ -4,7 +4,9 @@ resources:
   - namespace.yaml
   - deployment.yaml
   - service.yaml
-  - auth-secrets.yaml
+  # pushup-api-auth Secret is provisioned out-of-band via Terraform
+  # (mattjewell.co.uk repo) and lives only in the cluster — not in git.
+  # See README "Auth secrets (provisioned externally)".
   - ollama-secret.yaml
   - ingress.yaml
   - argocd-app.yaml

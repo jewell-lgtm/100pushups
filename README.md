@@ -1,6 +1,25 @@
 # 100 Pushups
 Voice-controlled pushup tracker with LLM coaching.
 
+## Auth secrets (provisioned externally)
+
+The `pushup-api-auth` Secret (containing `AUTH_SECRET` and
+`REGISTER_API_KEY`) is **not** managed from this repo. It's provisioned
+out-of-band — Terraform in the `mattjewell.co.uk` repo — and lives only
+in the cluster. `k8s/kustomization.yaml` deliberately omits the Secret
+manifest so `kubectl apply -k k8s/` and ArgoCD never overwrite it.
+
+If you need to bootstrap the Secret manually (e.g. for a fresh dev
+cluster before Terraform has run):
+
+```
+kubectl create secret generic pushup-api-auth -n pushups \
+  --from-literal=AUTH_SECRET=$(openssl rand -base64 32) \
+  --from-literal=REGISTER_API_KEY=$(openssl rand -base64 32)
+```
+
+Rotation procedure is in the **Auth secret rotation** section below.
+
 ## Database admin
 
 Dev/staging only — production has no real users yet so this is safe. After
