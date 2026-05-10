@@ -27,6 +27,16 @@ spec:
           value: "http://192.168.86.97:11434"
         - name: OLLAMA_MODEL
           value: "llama3.2:3b"
+        - name: NODE_ENV
+          value: "production"
+        envFrom:
+        # AUTH_SECRET, REGISTER_API_KEY (Phase 1.5)
+        - secretRef:
+            name: pushup-api-auth
+        # OLLAMA_USER, OLLAMA_PASSWORD (Phase 1.5.6 — backend → Ollama)
+        - secretRef:
+            name: pushup-api-ollama
+            optional: true
         resources:
           requests:
             memory: 64Mi

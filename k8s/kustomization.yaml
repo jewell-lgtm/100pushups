@@ -4,5 +4,7 @@ resources:
   - namespace.yaml
   - deployment.yaml
   - service.yaml
+  - auth-secrets.yaml
+  - ollama-secret.yaml
   - ingress.yaml
   - argocd-app.yaml

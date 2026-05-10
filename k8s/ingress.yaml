@@ -5,6 +5,9 @@ metadata:
   namespace: pushups
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: web
+    # No middleware here — auth is enforced by the Hono Bearer middleware
+    # at the application layer. See backend/src/middleware/bearerAuth.ts
+    # and backend/src/index.ts (`app.use('/api/*', bearerAuth(...))`).
 spec:
   ingressClassName: traefik
   rules:
