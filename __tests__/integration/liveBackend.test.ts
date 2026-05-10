@@ -3,11 +3,14 @@ import { fallbackParse } from '../../src/voice/FallbackParser';
 import { createApiClient, normalizeToolCall } from '../../src/api/client';
 import { ToolCall, VoiceContext, VoiceResponse } from '../../src/api/types';
 
-const API_BASE = process.env.TEST_API_BASE ?? 'http://localhost:3000';
+// Live tests are gated on TEST_API_BASE — when unset, the whole suite
+// skips cleanly so `pnpm test` is green without a running backend.
+const API_BASE = process.env.TEST_API_BASE;
 const REGISTER_KEY = process.env.TEST_REGISTER_KEY;
+const liveDescribe = API_BASE ? describe : describe.skip;
 let AUTH_HEADER: string | undefined;
 
-const api = () => createApiClient(API_BASE, { authHeader: AUTH_HEADER });
+const api = () => createApiClient(API_BASE!, { authHeader: AUTH_HEADER });
 
 function buildContext(state: WorkoutSessionState): VoiceContext {
   return {
@@ -28,7 +31,7 @@ async function liveRespond(state: WorkoutSessionState, transcript: string): Prom
   return api().voiceRespond({ transcript, context: buildContext(state) });
 }
 
-describe('Live backend voice harness', () => {
+liveDescribe('Live backend voice harness', () => {
   beforeAll(async () => {
     // If the backend has bearer auth enabled, register first to get a token.
     // Without TEST_REGISTER_KEY we assume the backend is auth-disabled
