@@ -135,6 +135,45 @@ describe('runChatExchange', () => {
     expect(last[1].status).toBe('final');
   });
 
+  it('falls back to deterministic parser when stream throws AbortError mid-flight (LLM timeout)', async () => {
+    // Phase 5.1: simulates an LLM call that streams a few tokens, then
+    // aborts (e.g. fetch timeout). runChatExchange should swallow the
+    // AbortError and fall through to FallbackParser. The spokenResponse
+    // returned (and what TTS would speak) must come from FallbackParser.
+    const fakeApi: IApiClient = {
+      voiceRespond: jest.fn(),
+      isReachable: jest.fn().mockResolvedValue(true),
+      voiceRespondStream: (async function* () {
+        yield { type: 'token', text: 'Thi' };
+        yield { type: 'token', text: 'nking' };
+        const err = new Error('aborted');
+        err.name = 'AbortError';
+        throw err;
+      }) as IApiClient['voiceRespondStream'],
+    };
+
+    const store = makeLogStore();
+    const response = await runChatExchange({
+      api: fakeApi,
+      transcript: 'ready',
+      context: ctx,
+      appState: 'awaiting_start',
+      targetReps: null,
+      setLog: store.setLog,
+      newId: makeIdGen(),
+    });
+
+    // FallbackParser handles 'ready' from awaiting_start with start_set + 'Go!'
+    expect(response.toolCalls).toEqual([{ name: 'start_set', params: {} }]);
+    expect(response.spokenResponse).toBe('Go!');
+
+    // Coach bubble keeps the streamed prefix because sawToken=true. TTS will
+    // speak response.spokenResponse ('Go!'), not the partial bubble text.
+    const last = store.snapshots[store.snapshots.length - 1];
+    expect(last[1].status).toBe('final');
+    expect(last[1].text).toBe('Thinking');
+  });
+
   it('falls back when generator finishes without a done frame', async () => {
     const fakeApi: IApiClient = {
       voiceRespond: jest.fn(),
