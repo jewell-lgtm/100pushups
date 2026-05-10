@@ -9,6 +9,7 @@ import { workoutRoutes } from './routes/workouts.js';
 import { planningRoutes } from './routes/planning.js';
 import { authRoutes } from './routes/auth.js';
 import { bearerAuth } from './middleware/bearerAuth.js';
+import { requestId } from './middleware/requestId.js';
 
 const PORT = parseInt(process.env['PORT'] ?? '3000', 10);
 const OLLAMA_URL = process.env['OLLAMA_URL'] ?? 'http://localhost:11434';
@@ -38,6 +39,9 @@ const ollama = createOllamaClient(OLLAMA_URL, OLLAMA_MODEL, ollamaAuth);
 
 const app = new Hono();
 
+// requestId runs first so the id is present on the context (and response
+// header) before Hono's access logger emits its line.
+app.use('*', requestId());
 app.use('*', logger());
 app.use('*', cors());
 

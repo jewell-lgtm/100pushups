@@ -18,6 +18,19 @@ export function voiceRoutes(ollama: IOllamaClient) {
       return c.json({ error: 'Missing transcript or context' }, 400);
     }
 
+    const reqId = c.get('reqId' as never) as string | undefined;
+    const deviceId = c.get('deviceId' as never) as string | undefined;
+    // Privacy: never log the raw transcript — only its length.
+    console.log(
+      JSON.stringify({
+        reqId,
+        route: '/api/v1/voice/respond',
+        transcriptLen: body.transcript.length,
+        appState: body.context.appState,
+        deviceId,
+      }),
+    );
+
     let result: OllamaResponse;
     try {
       result = await ollama.voiceRespond(body.transcript, body.context);
@@ -31,6 +44,15 @@ export function voiceRoutes(ollama: IOllamaClient) {
       result.spokenResponse = generateSpokenResponse(result.toolCalls, body.context);
     }
 
+    console.log(
+      JSON.stringify({
+        reqId,
+        route: '/api/v1/voice/respond',
+        toolCalls: result.toolCalls.length,
+        spokenLen: result.spokenResponse.length,
+      }),
+    );
+
     return c.json(result);
   });
 
@@ -40,6 +62,18 @@ export function voiceRoutes(ollama: IOllamaClient) {
     if (!body.transcript || !body.context) {
       return c.json({ error: 'Missing transcript or context' }, 400);
     }
+
+    const reqId = c.get('reqId' as never) as string | undefined;
+    const deviceId = c.get('deviceId' as never) as string | undefined;
+    console.log(
+      JSON.stringify({
+        reqId,
+        route: '/api/v1/voice/respond/stream',
+        transcriptLen: body.transcript.length,
+        appState: body.context.appState,
+        deviceId,
+      }),
+    );
 
     c.header('Content-Type', 'application/x-ndjson');
     c.header('Cache-Control', 'no-cache');
@@ -69,6 +103,15 @@ export function voiceRoutes(ollama: IOllamaClient) {
       }
 
       await s.write(JSON.stringify(doneFrame) + '\n');
+
+      console.log(
+        JSON.stringify({
+          reqId,
+          route: '/api/v1/voice/respond/stream',
+          toolCalls: doneFrame.toolCalls.length,
+          spokenLen: doneFrame.spokenResponse.length,
+        }),
+      );
     });
   });
 
