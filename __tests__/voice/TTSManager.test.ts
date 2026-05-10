@@ -40,4 +40,11 @@ describe('TTSManager', () => {
     expect(Speech.stop).toHaveBeenCalled();
     expect(tts.isSpeaking()).toBe(false);
   });
+
+  it('cancel() halts in-flight speech', () => {
+    const tts = createTTSManager();
+    tts.cancel();
+    expect(Speech.stop).toHaveBeenCalled();
+    expect(tts.isSpeaking()).toBe(false);
+  });
 });
