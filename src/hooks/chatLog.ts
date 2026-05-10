@@ -25,13 +25,11 @@ interface RunExchangeArgs {
   newId: () => string;
 }
 
-/**
- * Runs one user→coach exchange against the streaming API, mutating chatLog
- * via setLog. Pure orchestration: no TTS, no state machine, no React.
- *
- * Returns the final VoiceResponse (so the caller can drive tool dispatch
- * and TTS). On stream error, falls back to deterministic parsing.
- */
+// Runs one user→coach exchange against the streaming generator API,
+// mutating chatLog via setLog. Pure orchestration: no TTS, no state
+// machine, no React. Returns the final VoiceResponse so the caller can
+// dispatch tools + speak. On stream error or missing done frame, falls
+// back to deterministic parsing.
 export async function runChatExchange({
   api,
   transcript,
@@ -66,31 +64,37 @@ export async function runChatExchange({
   });
 
   let sawToken = false;
-  let response: VoiceResponse;
+  let response: VoiceResponse | null = null;
   try {
-    response = await api.voiceRespondStream(
-      { transcript, context },
-      (delta) => {
+    for await (const frame of api.voiceRespondStream({ transcript, context })) {
+      if (frame.type === 'token') {
         sawToken = true;
         setLog((log) =>
           log.map((m) =>
             m.id === coachId
-              ? { ...m, text: m.text + delta, status: 'streaming' }
+              ? { ...m, text: m.text + frame.text, status: 'streaming' }
               : m,
           ),
         );
-      },
-    );
+      } else {
+        response = { toolCalls: frame.toolCalls, spokenResponse: frame.spokenResponse };
+      }
+    }
   } catch {
+    response = null;
+  }
+
+  if (!response) {
     response = fallbackParse(transcript, appState, targetReps);
   }
 
-  // Settle the coach bubble: keep streamed text if any, else use the
-  // final spokenResponse from the done frame (or fallback).
+  // Settle the coach bubble: keep streamed text if any, else use the final
+  // spokenResponse from the done frame (or the fallback).
+  const settled = response;
   setLog((log) =>
     log.map((m) => {
       if (m.id !== coachId) return m;
-      const finalText = sawToken ? m.text : response.spokenResponse;
+      const finalText = sawToken ? m.text : settled.spokenResponse;
       return { ...m, text: finalText, status: 'final' };
     }),
   );

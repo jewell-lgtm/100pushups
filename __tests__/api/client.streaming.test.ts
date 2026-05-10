@@ -1,11 +1,10 @@
-import { AuthError, createApiClient } from '../../src/api/client';
+import { AuthError, createApiClient, StreamFrame } from '../../src/api/client';
 import { VoiceRequest } from '../../src/api/types';
 
 function makeNdjsonResponse(lines: string[], status = 200): Response {
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      // Push lines as separate chunks so we exercise the buffering path.
       for (const line of lines) {
         controller.enqueue(encoder.encode(line));
       }
@@ -32,6 +31,19 @@ const baseRequest: VoiceRequest = {
   },
 };
 
+async function drain(
+  gen: AsyncGenerator<StreamFrame, void, void>,
+): Promise<{ tokens: string[]; done: StreamFrame & { type: 'done' } }> {
+  const tokens: string[] = [];
+  let done: (StreamFrame & { type: 'done' }) | null = null;
+  for await (const frame of gen) {
+    if (frame.type === 'token') tokens.push(frame.text);
+    else done = frame;
+  }
+  if (!done) throw new Error('generator finished without a done frame');
+  return { tokens, done };
+}
+
 describe('voiceRespondStream', () => {
   let originalFetch: typeof globalThis.fetch;
   beforeEach(() => {
@@ -41,7 +53,7 @@ describe('voiceRespondStream', () => {
     globalThis.fetch = originalFetch;
   });
 
-  it('fires onToken per token frame and resolves to the done payload', async () => {
+  it('yields token frames per chunk and a done frame at the end', async () => {
     const lines = [
       JSON.stringify({ type: 'token', text: 'Go' }) + '\n',
       JSON.stringify({ type: 'token', text: '!' }) + '\n',
@@ -54,22 +66,19 @@ describe('voiceRespondStream', () => {
     ];
     globalThis.fetch = jest.fn().mockResolvedValue(makeNdjsonResponse(lines));
 
-    const tokens: string[] = [];
     const client = createApiClient('http://test');
-    const result = await client.voiceRespondStream(baseRequest, (t) => tokens.push(t));
+    const { tokens, done } = await drain(client.voiceRespondStream(baseRequest));
 
     expect(tokens).toEqual(['Go', '!', ' Set']);
-    expect(result.toolCalls).toEqual([{ name: 'start_set', params: {} }]);
-    expect(result.spokenResponse).toBe('Go! Set');
+    expect(done.toolCalls).toEqual([{ name: 'start_set', params: {} }]);
+    expect(done.spokenResponse).toBe('Go! Set');
   });
 
   it('handles a chunk that splits a line across reads', async () => {
     const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
-        // First chunk: half a token frame with no newline
         controller.enqueue(encoder.encode('{"type":"token","text":"hel'));
-        // Second chunk: rest of token frame plus done frame
         controller.enqueue(
           encoder.encode(
             'lo"}\n' +
@@ -84,12 +93,11 @@ describe('voiceRespondStream', () => {
       new Response(stream, { status: 200 }),
     );
 
-    const tokens: string[] = [];
     const client = createApiClient('http://test');
-    const result = await client.voiceRespondStream(baseRequest, (t) => tokens.push(t));
+    const { tokens, done } = await drain(client.voiceRespondStream(baseRequest));
 
     expect(tokens).toEqual(['hello']);
-    expect(result.spokenResponse).toBe('hello');
+    expect(done.spokenResponse).toBe('hello');
   });
 
   it('throws AuthError on 401', async () => {
@@ -97,9 +105,7 @@ describe('voiceRespondStream', () => {
       .fn()
       .mockResolvedValue(new Response('', { status: 401 }));
     const client = createApiClient('http://test');
-    await expect(
-      client.voiceRespondStream(baseRequest, () => {}),
-    ).rejects.toBeInstanceOf(AuthError);
+    await expect(drain(client.voiceRespondStream(baseRequest))).rejects.toBeInstanceOf(AuthError);
   });
 
   it('throws AuthError on 403', async () => {
@@ -107,18 +113,13 @@ describe('voiceRespondStream', () => {
       .fn()
       .mockResolvedValue(new Response('', { status: 403 }));
     const client = createApiClient('http://test');
-    await expect(
-      client.voiceRespondStream(baseRequest, () => {}),
-    ).rejects.toBeInstanceOf(AuthError);
+    await expect(drain(client.voiceRespondStream(baseRequest))).rejects.toBeInstanceOf(AuthError);
   });
 
   it('falls back to non-streaming when response.body is null (RN path)', async () => {
-    // First call: streaming endpoint returns body-less response
-    // Second call: non-streaming /respond endpoint returns full payload
     const fetchMock = jest
       .fn()
       .mockResolvedValueOnce(
-        // Body-less Response stand-in: object with status/ok and no .body
         {
           ok: true,
           status: 200,
@@ -136,12 +137,12 @@ describe('voiceRespondStream', () => {
       );
     globalThis.fetch = fetchMock;
 
-    const tokens: string[] = [];
     const client = createApiClient('http://test');
-    const result = await client.voiceRespondStream(baseRequest, (t) => tokens.push(t));
+    const { tokens, done } = await drain(client.voiceRespondStream(baseRequest));
 
     expect(tokens).toEqual(['Go!']);
-    expect(result.spokenResponse).toBe('Go!');
+    expect(done.spokenResponse).toBe('Go!');
+    expect(done.toolCalls).toEqual([{ name: 'start_set', params: {} }]);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

@@ -1,4 +1,4 @@
-import { AuthError, createApiClient, IApiClient } from './client';
+import { AuthError, createApiClient, IApiClient, StreamFrame } from './client';
 import { clearAuth, loadAuth, saveAuth } from '../auth/authStore';
 import { registerDevice } from '../auth/registerClient';
 import { VoiceRequest, VoiceResponse } from './types';
@@ -36,8 +36,9 @@ async function reauthenticate(): Promise<IApiClient> {
 }
 
 function wrapWithRetry(inner: IApiClient): IApiClient {
-  // Wraps voiceRespond so a single AuthError triggers reauth + retry.
-  // Other errors propagate as-is.
+  // Wraps voiceRespond/voiceRespondStream so a single AuthError triggers
+  // reauth + retry. Stream retry only fires before the first yielded frame
+  // — partial-stream auth failures would corrupt the consumer's state.
   let retrying = false;
   return {
     async voiceRespond(req: VoiceRequest): Promise<VoiceResponse> {
@@ -49,6 +50,27 @@ function wrapWithRetry(inner: IApiClient): IApiClient {
           try {
             const refreshed = await reauthenticate();
             return await refreshed.voiceRespond(req);
+          } finally {
+            retrying = false;
+          }
+        }
+        throw err;
+      }
+    },
+    async *voiceRespondStream(req: VoiceRequest): AsyncGenerator<StreamFrame, void, void> {
+      let yielded = 0;
+      try {
+        for await (const frame of inner.voiceRespondStream(req)) {
+          yielded++;
+          yield frame;
+        }
+      } catch (err) {
+        if (err instanceof AuthError && !retrying && yielded === 0) {
+          retrying = true;
+          try {
+            const refreshed = await reauthenticate();
+            yield* refreshed.voiceRespondStream(req);
+            return;
           } finally {
             retrying = false;
           }

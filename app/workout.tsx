@@ -58,7 +58,8 @@ export default function WorkoutScreen() {
   // back to FallbackParser — that's fine.
   const stubApi: IApiClient = {
     voiceRespond: async () => { throw new Error('api not ready'); },
-    voiceRespondStream: async () => { throw new Error('api not ready'); },
+    // eslint-disable-next-line require-yield
+    voiceRespondStream: async function* () { throw new Error('api not ready'); },
     isReachable: async () => false,
   };
 

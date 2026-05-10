@@ -1,11 +1,12 @@
 import { ToolCall, VoiceRequest, VoiceResponse } from './types';
 
+export type StreamFrame =
+  | { type: 'token'; text: string }
+  | { type: 'done'; toolCalls: ToolCall[]; spokenResponse: string };
+
 export interface IApiClient {
   voiceRespond(request: VoiceRequest): Promise<VoiceResponse>;
-  voiceRespondStream(
-    request: VoiceRequest,
-    onToken: (text: string) => void,
-  ): Promise<VoiceResponse>;
+  voiceRespondStream(request: VoiceRequest): AsyncGenerator<StreamFrame, void, void>;
   isReachable(): Promise<boolean>;
 }
 
@@ -19,19 +20,6 @@ export class AuthError extends Error {
     this.name = 'AuthError';
   }
 }
-
-interface DoneFrame {
-  type: 'done';
-  toolCalls: ToolCall[];
-  spokenResponse: string;
-}
-
-interface TokenFrame {
-  type: 'token';
-  text: string;
-}
-
-type StreamFrame = DoneFrame | TokenFrame;
 
 export function createApiClient(baseUrl: string, options: ApiClientOptions = {}): IApiClient {
   const authHeaders: Record<string, string> = options.authHeader
@@ -57,10 +45,9 @@ export function createApiClient(baseUrl: string, options: ApiClientOptions = {})
     return fetchJson<VoiceResponse>('/api/v1/voice/respond', request);
   }
 
-  async function voiceRespondStream(
+  async function* voiceRespondStream(
     request: VoiceRequest,
-    onToken: (text: string) => void,
-  ): Promise<VoiceResponse> {
+  ): AsyncGenerator<StreamFrame, void, void> {
     const response = await fetch(`${baseUrl}/api/v1/voice/respond/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders },
@@ -73,35 +60,19 @@ export function createApiClient(baseUrl: string, options: ApiClientOptions = {})
       throw new Error(`API error: ${response.status}`);
     }
 
-    // RN fallback: native fetch may not expose a streaming body. Degrade to the
-    // non-streaming endpoint and emit one synthetic token with the full text.
+    // RN fallback: native fetch may not expose a streaming body. Degrade to
+    // the non-streaming endpoint and synthesize a single token + done frame.
     const body = response.body;
     if (!body || typeof body.getReader !== 'function') {
       const full = await voiceRespond(request);
-      if (full.spokenResponse) onToken(full.spokenResponse);
-      return full;
+      if (full.spokenResponse) yield { type: 'token', text: full.spokenResponse };
+      yield { type: 'done', toolCalls: full.toolCalls, spokenResponse: full.spokenResponse };
+      return;
     }
 
     const reader = body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    let done: DoneFrame | null = null;
-
-    const handleLine = (line: string) => {
-      const trimmed = line.trim();
-      if (!trimmed) return;
-      let frame: StreamFrame;
-      try {
-        frame = JSON.parse(trimmed) as StreamFrame;
-      } catch {
-        return;
-      }
-      if (frame.type === 'token') {
-        onToken(frame.text);
-      } else if (frame.type === 'done') {
-        done = frame;
-      }
-    };
 
     while (true) {
       const { value, done: streamDone } = await reader.read();
@@ -109,24 +80,23 @@ export function createApiClient(baseUrl: string, options: ApiClientOptions = {})
         buffer += decoder.decode(value, { stream: true });
         let idx = buffer.indexOf('\n');
         while (idx !== -1) {
-          handleLine(buffer.slice(0, idx));
+          const line = buffer.slice(0, idx).trim();
           buffer = buffer.slice(idx + 1);
+          if (line) {
+            const frame = parseStreamFrame(line);
+            if (frame) yield frame;
+          }
           idx = buffer.indexOf('\n');
         }
       }
       if (streamDone) break;
     }
     buffer += decoder.decode();
-    if (buffer.length > 0) handleLine(buffer);
-
-    if (!done) {
-      throw new Error('Streaming response ended without done frame');
+    const tail = buffer.trim();
+    if (tail) {
+      const frame = parseStreamFrame(tail);
+      if (frame) yield frame;
     }
-    const finalFrame = done as DoneFrame;
-    return {
-      toolCalls: finalFrame.toolCalls,
-      spokenResponse: finalFrame.spokenResponse,
-    };
   }
 
   return {
@@ -144,6 +114,16 @@ export function createApiClient(baseUrl: string, options: ApiClientOptions = {})
       }
     },
   };
+}
+
+function parseStreamFrame(line: string): StreamFrame | null {
+  try {
+    const frame = JSON.parse(line) as StreamFrame;
+    if (frame.type === 'token' || frame.type === 'done') return frame;
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 // LLMs (notably small ones like llama3.2:3b) sometimes return numeric tool

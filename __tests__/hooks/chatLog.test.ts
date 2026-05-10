@@ -1,6 +1,6 @@
 import { ChatMessage, runChatExchange } from '../../src/hooks/chatLog';
-import { IApiClient } from '../../src/api/client';
-import { VoiceContext, VoiceRequest, VoiceResponse } from '../../src/api/types';
+import { IApiClient, StreamFrame } from '../../src/api/client';
+import { VoiceContext, VoiceRequest } from '../../src/api/types';
 
 const ctx: VoiceContext = {
   appState: 'awaiting_start',
@@ -18,7 +18,6 @@ function makeIdGen() {
   return () => `id-${++n}`;
 }
 
-/** Wraps a mutable array; captures snapshots on each setLog call. */
 function makeLogStore() {
   let log: ChatMessage[] = [];
   const snapshots: ChatMessage[][] = [];
@@ -35,23 +34,24 @@ function makeLogStore() {
   };
 }
 
+// Build an async generator from canned StreamFrame yields.
+function genFrom(frames: StreamFrame[]): () => AsyncGenerator<StreamFrame, void, void> {
+  return async function* () {
+    for (const f of frames) yield f;
+  };
+}
+
 describe('runChatExchange', () => {
   it('streams three tokens and finalizes the coach bubble', async () => {
     const fakeApi: IApiClient = {
       voiceRespond: jest.fn(),
       isReachable: jest.fn().mockResolvedValue(true),
-      voiceRespondStream: async (
-        _req: VoiceRequest,
-        onToken: (t: string) => void,
-      ): Promise<VoiceResponse> => {
-        onToken('Go');
-        onToken('!');
-        onToken(' Set');
-        return {
-          toolCalls: [{ name: 'start_set', params: {} }],
-          spokenResponse: 'Go! Set',
-        };
-      },
+      voiceRespondStream: genFrom([
+        { type: 'token', text: 'Go' },
+        { type: 'token', text: '!' },
+        { type: 'token', text: ' Set' },
+        { type: 'done', toolCalls: [{ name: 'start_set', params: {} }], spokenResponse: 'Go! Set' },
+      ]) as IApiClient['voiceRespondStream'],
     };
 
     const store = makeLogStore();
@@ -65,14 +65,7 @@ describe('runChatExchange', () => {
       newId: makeIdGen(),
     });
 
-    // Snapshots in order:
-    // 0: pair pushed (user final, coach pending text='')
-    // 1: streaming with 'Go'
-    // 2: streaming with 'Go!'
-    // 3: streaming with 'Go! Set'
-    // 4: final
     expect(store.snapshots.length).toBe(5);
-
     const [pushed, s1, s2, s3, finalSnap] = store.snapshots;
 
     expect(pushed.map((m) => [m.role, m.status, m.text])).toEqual([
@@ -82,13 +75,8 @@ describe('runChatExchange', () => {
 
     expect(s1[1].text).toBe('Go');
     expect(s1[1].status).toBe('streaming');
-
     expect(s2[1].text).toBe('Go!');
-    expect(s2[1].status).toBe('streaming');
-
     expect(s3[1].text).toBe('Go! Set');
-    expect(s3[1].status).toBe('streaming');
-
     expect(finalSnap[1].text).toBe('Go! Set');
     expect(finalSnap[1].status).toBe('final');
 
@@ -99,10 +87,9 @@ describe('runChatExchange', () => {
     const fakeApi: IApiClient = {
       voiceRespond: jest.fn(),
       isReachable: jest.fn().mockResolvedValue(true),
-      voiceRespondStream: async () => ({
-        toolCalls: [],
-        spokenResponse: 'Say ready when you want to start.',
-      }),
+      voiceRespondStream: genFrom([
+        { type: 'done', toolCalls: [], spokenResponse: 'Say ready when you want to start.' },
+      ]) as IApiClient['voiceRespondStream'],
     };
 
     const store = makeLogStore();
@@ -125,9 +112,10 @@ describe('runChatExchange', () => {
     const fakeApi: IApiClient = {
       voiceRespond: jest.fn(),
       isReachable: jest.fn().mockResolvedValue(true),
-      voiceRespondStream: async () => {
+      // eslint-disable-next-line require-yield
+      voiceRespondStream: (async function* () {
         throw new Error('network');
-      },
+      }) as IApiClient['voiceRespondStream'],
     };
 
     const store = makeLogStore();
@@ -141,10 +129,37 @@ describe('runChatExchange', () => {
       newId: makeIdGen(),
     });
 
-    // FallbackParser maps 'ready' in awaiting_start → start_set / 'Go!'
     expect(response.toolCalls).toEqual([{ name: 'start_set', params: {} }]);
     const last = store.snapshots[store.snapshots.length - 1];
     expect(last[1].text).toBe('Go!');
+    expect(last[1].status).toBe('final');
+  });
+
+  it('falls back when generator finishes without a done frame', async () => {
+    const fakeApi: IApiClient = {
+      voiceRespond: jest.fn(),
+      isReachable: jest.fn().mockResolvedValue(true),
+      voiceRespondStream: genFrom([
+        { type: 'token', text: 'partial' },
+      ]) as IApiClient['voiceRespondStream'],
+    };
+
+    const store = makeLogStore();
+    const response = await runChatExchange({
+      api: fakeApi,
+      transcript: 'ready',
+      context: ctx,
+      appState: 'awaiting_start',
+      targetReps: null,
+      setLog: store.setLog,
+      newId: makeIdGen(),
+    });
+
+    // Stream had a token but no done — fall back to deterministic parser.
+    // Coach bubble keeps the streamed 'partial' text since sawToken=true.
+    expect(response.toolCalls).toEqual([{ name: 'start_set', params: {} }]);
+    const last = store.snapshots[store.snapshots.length - 1];
+    expect(last[1].text).toBe('partial');
     expect(last[1].status).toBe('final');
   });
 
@@ -152,16 +167,12 @@ describe('runChatExchange', () => {
     const fakeApi: IApiClient = {
       voiceRespond: jest.fn(),
       isReachable: jest.fn().mockResolvedValue(true),
-      voiceRespondStream: async (
-        _req: VoiceRequest,
-        onToken: (t: string) => void,
-      ): Promise<VoiceResponse> => {
-        onToken('hi');
-        return { toolCalls: [], spokenResponse: 'hi' };
-      },
+      voiceRespondStream: genFrom([
+        { type: 'token', text: 'hi' },
+        { type: 'done', toolCalls: [], spokenResponse: 'hi' },
+      ]) as IApiClient['voiceRespondStream'],
     };
 
-    // Pre-seed: a stale pending coach bubble from an interrupted exchange
     let log: ChatMessage[] = [
       { id: 'old', role: 'coach', text: 'partial', status: 'streaming' },
     ];
