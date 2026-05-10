@@ -12,7 +12,12 @@ import { bearerAuth } from './middleware/bearerAuth.js';
 import { requestId } from './middleware/requestId.js';
 
 const PORT = parseInt(process.env['PORT'] ?? '3000', 10);
-const OLLAMA_URL = process.env['OLLAMA_URL'] ?? 'http://localhost:11434';
+// Default to the Docker/OrbStack-internal host alias. Inside the cluster
+// the deployment overrides this via env to point at an OrbStack `.local`
+// hostname (see Phase 1.5.6 in README — Ollama transport). Outside the
+// cluster (e.g. backend dev on the laptop) `host.docker.internal` is the
+// portable name the host kernel exposes to containers.
+const OLLAMA_URL = process.env['OLLAMA_URL'] ?? 'http://host.docker.internal:11434';
 const OLLAMA_MODEL = process.env['OLLAMA_MODEL'] ?? 'llama3.2:3b';
 const OLLAMA_USER = process.env['OLLAMA_USER'];
 const OLLAMA_PASSWORD = process.env['OLLAMA_PASSWORD'];

@@ -23,8 +23,14 @@ spec:
           value: "3000"
         - name: DATA_DIR
           value: "/data"
+        # Phase 1.5.6: backend talks to Ollama over OrbStack's internal
+        # network (same box). The previous LAN IP worked but exposed the
+        # hop to anything on the LAN. Use host.docker.internal as a safe
+        # universal default; override to an OrbStack `.local` hostname
+        # (e.g. http://ollama.orb.local:11434) once verified reachable
+        # from inside the pod with `kubectl exec ... curl $OLLAMA_URL/api/tags`.
         - name: OLLAMA_URL
-          value: "http://192.168.86.97:11434"
+          value: "http://host.docker.internal:11434"
         - name: OLLAMA_MODEL
           value: "llama3.2:3b"
         - name: NODE_ENV
