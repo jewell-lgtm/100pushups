@@ -145,6 +145,7 @@ describe('runChatExchange', () => {
     // returned (and what TTS would speak) must come from FallbackParser.
     const fakeApi: IApiClient = {
       voiceRespond: jest.fn(),
+      syncWorkouts: jest.fn(),
       isReachable: jest.fn().mockResolvedValue(true),
       voiceRespondStream: (async function* () {
         yield { type: 'token', text: 'Thi' };
