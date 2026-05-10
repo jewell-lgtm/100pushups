@@ -8,10 +8,20 @@ import {
 } from '../state/WorkoutState';
 import { ITTSManager } from '../voice/TTSManager';
 import { IVoiceManager } from '../voice/VoiceManager';
-import { IApiClient } from '../api/client';
+import { IApiClient, normalizeToolCall } from '../api/client';
 import { IRepository } from '../db/repository';
-import { VoiceContext, VoiceResponse } from '../api/types';
+import { AppState, ToolCall, VoiceContext, VoiceResponse } from '../api/types';
 import { fallbackParse } from '../voice/FallbackParser';
+
+// Which tool names are valid in each app state. Used to filter out
+// LLM hallucinations (e.g. complete_set issued from between_sets).
+const VALID_TOOLS_BY_STATE: Record<AppState, ReadonlySet<ToolCall['name']>> = {
+  idle: new Set(),
+  awaiting_start: new Set(['start_set', 'adjust_target']),
+  mid_set: new Set(['record_reps', 'complete_set', 'adjust_target', 'end_session']),
+  between_sets: new Set(['start_set', 'end_session', 'adjust_target']),
+  post_workout: new Set(['record_feedback']),
+};
 
 interface UseWorkoutSessionOptions {
   tts: ITTSManager;
@@ -113,9 +123,28 @@ export function useWorkoutSession({
         response = fallbackParse(transcript, s.appState, s.targetReps);
       }
 
-      // Execute tool calls through state machine
-      for (const toolCall of response.toolCalls) {
-        await dispatch({ type: 'TOOL_CALL', toolCall });
+      // Filter out tool calls the LLM hallucinated for the current state.
+      // Small models (e.g. llama3.2:3b) sometimes return complete_set from
+      // between_sets, which corrupts state. If filtering leaves nothing —
+      // or the LLM returned no tools at all — try the deterministic
+      // fallback parser before giving up.
+      const validTools = VALID_TOOLS_BY_STATE[s.appState];
+      const validCalls = response.toolCalls.filter((tc) => validTools.has(tc.name));
+      if (validCalls.length === 0) {
+        const fallback = fallbackParse(transcript, s.appState, s.targetReps);
+        const fallbackValid = fallback.toolCalls.filter((tc) => validTools.has(tc.name));
+        if (fallbackValid.length > 0) {
+          validCalls.push(...fallbackValid);
+          if (fallback.spokenResponse) {
+            response = { ...response, spokenResponse: fallback.spokenResponse };
+          }
+        }
+      }
+
+      // Execute tool calls through state machine. Normalize first — LLMs
+      // sometimes return numeric tool args as strings.
+      for (const toolCall of validCalls) {
+        await dispatch({ type: 'TOOL_CALL', toolCall: normalizeToolCall(toolCall) });
       }
 
       // Speak the response
@@ -172,12 +201,14 @@ export function useWorkoutSession({
     await dispatch({ type: 'GREETING_DONE' });
   }, [repo, exerciseId, tts, dispatch]);
 
-  // Wire up voice transcript handler
+  // Wire the transcript handler. We deliberately do NOT call voice.destroy()
+  // in cleanup: createVoiceManager binds its engine.onSpeechResults listener
+  // once at construction, and removeListeners() inside destroy() can't be
+  // re-bound from here. React Strict Mode (dev) would otherwise tear it
+  // down on first-pass unmount and leave the engine deaf. The engine is a
+  // closure with no native resources, so leaking the listener is fine.
   useEffect(() => {
     voice.onTranscript(handleTranscript);
-    return () => {
-      voice.destroy();
-    };
   }, [voice, handleTranscript]);
 
   return {

@@ -119,7 +119,9 @@ function handleToolCall(
 
     case 'record_feedback': {
       return {
-        state: { ...state, userFeedback: toolCall.params.feedback },
+        // Reset appState to idle so the workout screen's
+        // (idle && userFeedback) effect can navigate home.
+        state: { ...state, appState: 'idle', userFeedback: toolCall.params.feedback },
         effects: [{ type: 'SAVE_SESSION' }, { type: 'NAVIGATE_HOME' }],
       };
     }

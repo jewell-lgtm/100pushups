@@ -11,7 +11,7 @@ const WORD_TO_NUMBER: Record<string, number> = {
 const START_WORDS = ['ready', 'go', 'start', 'begin', 'lets go', "let's go"] as const;
 const DONE_WORDS = ['done', 'finished', 'stop', 'complete'] as const;
 const YES_WORDS = ['yes', 'yeah', 'yep', 'sure', 'another', 'again', 'one more'] as const;
-const NO_WORDS = ['no', 'nope', 'nah', 'enough', 'im done', "i'm done"] as const;
+const NO_WORDS = ['no more', 'no', 'nope', 'nah', 'enough', 'im done', "i'm done", 'finished', 'all done'] as const;
 
 export function parseTranscriptWords(text: string): number | null {
   const normalized = text.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();

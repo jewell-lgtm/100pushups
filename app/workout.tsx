@@ -30,17 +30,25 @@ export default function WorkoutScreen() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
   const [textInput, setTextInput] = useState('');
-  const ttsRef = useRef(createTTSManager());
-  const engineRef = useRef(createPlaceholderEngine());
-  const voiceRef = useRef(createVoiceManager(engineRef.current));
-  const apiRef = useRef(createApiClient(API_BASE));
+  // Lazy refs — useRef evaluates its argument on every render. createVoiceManager
+  // has the side effect of engine.onSpeechResults(...), so calling it more than
+  // once would re-bind the engine listener to an unused manager and the first
+  // (used) manager would never hear results.
+  const ttsRef = useRef<ReturnType<typeof createTTSManager> | null>(null);
+  if (!ttsRef.current) ttsRef.current = createTTSManager();
+  const engineRef = useRef<ReturnType<typeof createPlaceholderEngine> | null>(null);
+  if (!engineRef.current) engineRef.current = createPlaceholderEngine();
+  const voiceRef = useRef<ReturnType<typeof createVoiceManager> | null>(null);
+  if (!voiceRef.current) voiceRef.current = createVoiceManager(engineRef.current);
+  const apiRef = useRef<ReturnType<typeof createApiClient> | null>(null);
+  if (!apiRef.current) apiRef.current = createApiClient(API_BASE);
   const dbRef = useRef<any>(null);
   const repoRef = useRef<any>(null);
 
   const { state, startSession } = useWorkoutSession({
-    tts: ttsRef.current,
-    voice: voiceRef.current,
-    api: apiRef.current,
+    tts: ttsRef.current!,
+    voice: voiceRef.current!,
+    api: apiRef.current!,
     repo: repoRef.current ?? {
       buildVoiceContext: async () => ({ todayTarget: null, yesterdayTotal: null, personalBest: null, streak: 0, sessionType: 'regular' as const }),
       insertSession: async () => {},
@@ -73,7 +81,7 @@ export default function WorkoutScreen() {
 
   const sendText = useCallback(() => {
     if (!textInput.trim()) return;
-    engineRef.current.simulateResults([textInput.trim()]);
+    engineRef.current?.simulateResults([textInput.trim()]);
     setTextInput('');
   }, [textInput]);
 
