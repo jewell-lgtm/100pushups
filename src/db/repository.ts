@@ -15,6 +15,15 @@ export function parseDailyTargets(json: string): Record<string, number> {
   return result;
 }
 
+export interface UpsertWeeklyPlanInput {
+  id: string;
+  exerciseId: string;
+  weekStart: string;
+  dailyTargets: Record<string, number>;
+  notes: string | null;
+  evaluationReps?: number | null;
+}
+
 export interface IRepository {
   getYesterdaySession(exerciseId: string): Promise<{ totalReps: number; setCount: number } | null>;
   getPersonalBest(exerciseId: string): Promise<{ reps: number; date: string } | null>;
@@ -24,6 +33,7 @@ export interface IRepository {
   insertSession(session: Omit<Session, 'synced'>): Promise<void>;
   updateSession(id: string, updates: Partial<Session>): Promise<void>;
   insertSet(set: WorkoutSet): Promise<void>;
+  upsertWeeklyPlan(plan: UpsertWeeklyPlanInput): Promise<void>;
   buildVoiceContext(exerciseId: string): Promise<Omit<VoiceContext, 'appState' | 'currentSet' | 'setsCompleted'>>;
 }
 
@@ -135,6 +145,28 @@ export function createRepository(db: SQLiteDatabase): IRepository {
         `INSERT INTO sets (id, session_id, set_number, reps, recorded_at, rest_seconds)
          VALUES (?, ?, ?, ?, ?, ?)`,
         [set.id, set.sessionId, set.setNumber, set.reps, set.recordedAt, set.restSeconds],
+      );
+    },
+
+    // Mirrors the backend `weekly_plans` row into local SQLite. The
+    // backend response only carries `id/weekStart/dailyTargets/notes`
+    // (see `backend/src/routes/planning.ts:78-83`), so `evaluationReps`
+    // is optional and defaults to null when re-mirroring. INSERT OR
+    // REPLACE on the PK lets re-generation overwrite the same row
+    // without a separate UPDATE path.
+    async upsertWeeklyPlan(plan) {
+      await db.runAsync(
+        `INSERT OR REPLACE INTO weekly_plans
+           (id, exercise_id, week_start, evaluation_reps, daily_targets, notes)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          plan.id,
+          plan.exerciseId,
+          plan.weekStart,
+          plan.evaluationReps ?? null,
+          JSON.stringify(plan.dailyTargets),
+          plan.notes,
+        ],
       );
     },
 
