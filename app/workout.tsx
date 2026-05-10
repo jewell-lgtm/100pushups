@@ -55,11 +55,13 @@ export default function WorkoutScreen() {
 
   // Stable stub used until the real API client is loaded post-mount.
   // Voice calls in those first few ms will throw and the hook will fall
-  // back to FallbackParser — that's fine.
+  // back to FallbackParser — that's fine. syncWorkouts also throws so the
+  // sync service's fetch-error path returns 0 rather than silently lying.
   const stubApi: IApiClient = {
     voiceRespond: async () => { throw new Error('api not ready'); },
     // eslint-disable-next-line require-yield
     voiceRespondStream: async function* () { throw new Error('api not ready'); },
+    syncWorkouts: async () => { throw new Error('api not ready'); },
     isReachable: async () => false,
   };
 

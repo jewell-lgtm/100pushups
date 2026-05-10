@@ -45,6 +45,7 @@ describe('runChatExchange', () => {
   it('streams three tokens and finalizes the coach bubble', async () => {
     const fakeApi: IApiClient = {
       voiceRespond: jest.fn(),
+      syncWorkouts: jest.fn(),
       isReachable: jest.fn().mockResolvedValue(true),
       voiceRespondStream: genFrom([
         { type: 'token', text: 'Go' },
@@ -86,6 +87,7 @@ describe('runChatExchange', () => {
   it('uses spokenResponse when no tokens streamed (backend fallback path)', async () => {
     const fakeApi: IApiClient = {
       voiceRespond: jest.fn(),
+      syncWorkouts: jest.fn(),
       isReachable: jest.fn().mockResolvedValue(true),
       voiceRespondStream: genFrom([
         { type: 'done', toolCalls: [], spokenResponse: 'Say ready when you want to start.' },
@@ -111,6 +113,7 @@ describe('runChatExchange', () => {
   it('falls back to deterministic parser on stream error', async () => {
     const fakeApi: IApiClient = {
       voiceRespond: jest.fn(),
+      syncWorkouts: jest.fn(),
       isReachable: jest.fn().mockResolvedValue(true),
       // eslint-disable-next-line require-yield
       voiceRespondStream: (async function* () {
@@ -177,6 +180,7 @@ describe('runChatExchange', () => {
   it('falls back when generator finishes without a done frame', async () => {
     const fakeApi: IApiClient = {
       voiceRespond: jest.fn(),
+      syncWorkouts: jest.fn(),
       isReachable: jest.fn().mockResolvedValue(true),
       voiceRespondStream: genFrom([
         { type: 'token', text: 'partial' },
@@ -205,6 +209,7 @@ describe('runChatExchange', () => {
   it('finalizes a prior in-flight coach bubble before pushing the new pair', async () => {
     const fakeApi: IApiClient = {
       voiceRespond: jest.fn(),
+      syncWorkouts: jest.fn(),
       isReachable: jest.fn().mockResolvedValue(true),
       voiceRespondStream: genFrom([
         { type: 'token', text: 'hi' },

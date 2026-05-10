@@ -1,4 +1,11 @@
-import { AuthError, createApiClient, IApiClient, StreamFrame } from './client';
+import {
+  AuthError,
+  createApiClient,
+  IApiClient,
+  StreamFrame,
+  SyncRequest,
+  SyncResponse,
+} from './client';
 import { clearAuth, loadAuth, saveAuth } from '../auth/authStore';
 import { registerDevice } from '../auth/registerClient';
 import { VoiceRequest, VoiceResponse } from './types';
@@ -90,6 +97,17 @@ function wrapWithRetry(inner: IApiClient): IApiClient {
           const refreshed = await reauthOnce();
           yield* refreshed.voiceRespondStream(req);
           return;
+        }
+        throw err;
+      }
+    },
+    async syncWorkouts(req: SyncRequest): Promise<SyncResponse> {
+      try {
+        return await inner.syncWorkouts(req);
+      } catch (err) {
+        if (err instanceof AuthError) {
+          const refreshed = await reauthOnce();
+          return await refreshed.syncWorkouts(req);
         }
         throw err;
       }

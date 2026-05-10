@@ -4,9 +4,43 @@ export type StreamFrame =
   | { type: 'token'; text: string }
   | { type: 'done'; toolCalls: ToolCall[]; spokenResponse: string };
 
+// Sync payload shapes mirror backend/src/routes/workouts.ts. `deviceId` is
+// intentionally absent from the request — the Bearer header identifies the
+// device and the server stamps each session server-side (1.5.7 RBAC).
+export interface SyncSet {
+  id: string;
+  setNumber: number;
+  reps: number;
+  recordedAt: string;
+  restSeconds: number | null;
+}
+
+export interface SyncSession {
+  id: string;
+  exerciseId: string;
+  weeklyPlanId: string | null;
+  sessionType: string;
+  targetReps: number | null;
+  startedAt: string;
+  endedAt: string;
+  totalReps: number;
+  setCount: number;
+  userFeedback: string | null;
+  sets: SyncSet[];
+}
+
+export interface SyncRequest {
+  sessions: SyncSession[];
+}
+
+export interface SyncResponse {
+  synced: string[];
+}
+
 export interface IApiClient {
   voiceRespond(request: VoiceRequest): Promise<VoiceResponse>;
   voiceRespondStream(request: VoiceRequest): AsyncGenerator<StreamFrame, void, void>;
+  syncWorkouts(request: SyncRequest): Promise<SyncResponse>;
   isReachable(): Promise<boolean>;
 }
 
@@ -43,6 +77,10 @@ export function createApiClient(baseUrl: string, options: ApiClientOptions = {})
 
   async function voiceRespond(request: VoiceRequest): Promise<VoiceResponse> {
     return fetchJson<VoiceResponse>('/api/v1/voice/respond', request);
+  }
+
+  async function syncWorkouts(request: SyncRequest): Promise<SyncResponse> {
+    return fetchJson<SyncResponse>('/api/v1/workouts/sync', request);
   }
 
   async function* voiceRespondStream(
@@ -102,6 +140,7 @@ export function createApiClient(baseUrl: string, options: ApiClientOptions = {})
   return {
     voiceRespond,
     voiceRespondStream,
+    syncWorkouts,
     async isReachable(): Promise<boolean> {
       try {
         const response = await fetch(`${baseUrl}/health`, {
