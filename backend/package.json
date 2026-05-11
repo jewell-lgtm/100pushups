@@ -12,7 +12,8 @@
   "dependencies": {
     "@hono/node-server": "^2.0.2",
     "better-sqlite3": "^11.7.0",
-    "hono": "^4.7.0"
+    "hono": "^4.7.0",
+    "posthog-node": "^5.33.4"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",

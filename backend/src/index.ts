@@ -10,6 +10,7 @@ import { planningRoutes } from './routes/planning.js';
 import { authRoutes } from './routes/auth.js';
 import { bearerAuth } from './middleware/bearerAuth.js';
 import { requestId } from './middleware/requestId.js';
+import { shutdownAnalytics } from './analytics.js';
 
 const PORT = parseInt(process.env['PORT'] ?? '3000', 10);
 // Default to the Docker/OrbStack-internal host alias. Inside the cluster
@@ -62,6 +63,21 @@ app.route('/api/v1/voice', voiceRoutes(ollama));
 app.route('/api/v1/workouts', workoutRoutes(db));
 app.route('/api/v1/plan', planningRoutes(db, OLLAMA_URL, OLLAMA_MODEL, ollamaAuth));
 
-serve({ fetch: app.fetch, port: PORT }, (info) => {
+const server = serve({ fetch: app.fetch, port: PORT }, (info) => {
   console.log(`pushup-api listening on :${info.port} (ollama: ${OLLAMA_URL}, model: ${OLLAMA_MODEL})`);
 });
+
+// Graceful shutdown: flush PostHog so the last few captures aren't lost
+// when k8s rolls the pod. SIGTERM is the deployment signal; SIGINT covers
+// `Ctrl-C` during local `tsx watch` runs.
+async function shutdown(signal: NodeJS.Signals): Promise<void> {
+  console.log(`received ${signal}, flushing analytics + closing server`);
+  await shutdownAnalytics();
+  server.close(() => process.exit(0));
+  // Defensive timeout: if `server.close` hangs (open keep-alive
+  // connections), exit anyway so the orchestrator's grace window doesn't
+  // kill -9 us mid-flush. The flush has already completed by here.
+  setTimeout(() => process.exit(0), 5_000).unref();
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);

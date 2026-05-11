@@ -175,3 +175,69 @@ silently re-register, and keep going. To rotate
 the same steps for that key and ship a new app build with the
 matching `EXPO_PUBLIC_REGISTER_API_KEY`. Devices on the old build
 will fail to re-register until updated.
+
+## Analytics
+
+The app sends a small set of product-analytics events to
+[PostHog](https://posthog.com). Identity is the per-device bearer
+`deviceId` from `src/auth/authStore.ts` — the same one that scopes
+data on the backend — so events are stable across app launches and
+never tied to PII.
+
+### What we capture
+
+Client-side (`src/analytics/posthog.ts`):
+
+| Event | Props | Fired from |
+| --- | --- | --- |
+| `workout_started` | `todayTarget`, `hasPlan` | `useWorkoutSession.startSession` |
+| `set_completed` | `setIndex`, `reps`, `targetReps` | `useWorkoutSession` effect on `setsCompleted` |
+| `session_ended` | `totalReps`, `setsCount`, `feltCategory` | `useWorkoutSession` effect on `appState=idle` after `record_feedback` |
+| `voice_utterance_routed` | `tool`, `fromState`, `fallbackUsed` | `useWorkoutSession.handleTranscript` |
+| `sync_failed` | `pendingCount`, `errorClass` | `src/db/sync.ts` catch path |
+| `plan_generated` | `exerciseId` | `app/plan.tsx` after a successful generate |
+
+Backend-side (`backend/src/analytics.ts`):
+
+| Event | Props | Fired from |
+| --- | --- | --- |
+| `voice_respond` | `route`, `latencyMs`, `fallbackUsed`, `distinctId=deviceId` | `backend/src/routes/voice.ts` after each call |
+
+### What we don't capture
+
+- Raw transcripts (we only log lengths server-side; analytics carries
+  `tool` + `fromState` instead).
+- Chat logs of any kind.
+- Free-text user input — the `userFeedback` shorthand from
+  `record_feedback` is short and is sent as `feltCategory`. Goals text
+  (captured in onboarding, Phase 11) is never sent to PostHog.
+- IP, device fingerprint, or anything beyond the `deviceId` already
+  used for backend scoping.
+
+### How to disable
+
+Unset the env vars and analytics stops at boot:
+
+- Client: leave `EXPO_PUBLIC_POSTHOG_KEY` out of the build env. The
+  SDK is not initialised; `track(...)` is a no-op.
+- Backend: leave `POSTHOG_API_KEY` out of the pod env. No PostHog
+  client is constructed.
+
+Both modules tolerate the unset case without logging spam.
+
+### How to self-host
+
+Point both env vars at your self-hosted PostHog endpoint and ship
+the matching project keys:
+
+```
+EXPO_PUBLIC_POSTHOG_HOST=https://posthog.example
+EXPO_PUBLIC_POSTHOG_KEY=<project key from self-hosted instance>
+
+# Backend (k8s secret on the same shape)
+POSTHOG_HOST=https://posthog.example
+POSTHOG_API_KEY=<project key from self-hosted instance>
+```
+
+Defaults are PostHog Cloud EU (`https://eu.i.posthog.com`) — UK-based
+project, EU data residency by default.

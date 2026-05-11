@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { bootstrapAuth } from './bootstrapAuth';
 import { getApiBase, resetApiClientCache } from '../api/getApiClient';
+import { initAnalytics } from '../analytics/posthog';
 
 const REGISTER_KEY = process.env.EXPO_PUBLIC_REGISTER_API_KEY;
 
@@ -23,8 +24,12 @@ export function AuthGate({ children }: AuthGateProps) {
         if (!REGISTER_KEY) {
           throw new Error('EXPO_PUBLIC_REGISTER_API_KEY is not set');
         }
-        await bootstrapAuth(getApiBase(), REGISTER_KEY);
+        const auth = await bootstrapAuth(getApiBase(), REGISTER_KEY);
         resetApiClientCache();
+        // Initialise analytics once we have a stable deviceId. Idempotent —
+        // safe to call again on Retry. No-ops when EXPO_PUBLIC_POSTHOG_KEY
+        // is unset (dev/CI).
+        initAnalytics(auth.deviceId);
         if (!cancelled) setStatus('ready');
       } catch (err) {
         if (cancelled) return;

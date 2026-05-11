@@ -14,6 +14,13 @@ import { VoiceContext, VoiceResponse } from '../api/types';
 import { fallbackParse } from '../voice/FallbackParser';
 import { ChatMessage, runChatExchange } from './chatLog';
 import { filterValidTools } from './validTools';
+import {
+  EVENT_SESSION_ENDED,
+  EVENT_SET_COMPLETED,
+  EVENT_VOICE_UTTERANCE_ROUTED,
+  EVENT_WORKOUT_STARTED,
+  track,
+} from '../analytics/posthog';
 
 export type { ChatMessage, ChatRole, ChatStatus } from './chatLog';
 
@@ -103,6 +110,7 @@ export function useWorkoutSession({
   const handleTranscript = useCallback(
     async (transcript: string) => {
       const s = stateRef.current;
+      const fromState = s.appState;
 
       // If TTS is mid-speech when a new utterance lands, cut it off so the
       // chat UI's bubble lifecycle doesn't lag behind audio.
@@ -138,11 +146,13 @@ export function useWorkoutSession({
       // between_sets, which corrupts state. If filtering leaves nothing —
       // or the LLM returned no tools at all — try the deterministic
       // fallback parser before giving up.
+      let fallbackUsed = false;
       const validCalls = filterValidTools(response.toolCalls, s.appState);
       if (validCalls.length === 0) {
         const fallback = fallbackParse(transcript, s.appState, s.targetReps);
         const fallbackValid = filterValidTools(fallback.toolCalls, s.appState);
         if (fallbackValid.length > 0) {
+          fallbackUsed = true;
           validCalls.push(...fallbackValid);
           if (fallback.spokenResponse) {
             response = { ...response, spokenResponse: fallback.spokenResponse };
@@ -164,7 +174,24 @@ export function useWorkoutSession({
       // Execute tool calls through state machine. Normalize first — LLMs
       // sometimes return numeric tool args as strings.
       for (const toolCall of validCalls) {
+        // Analytics: one event per routed tool. Captures the *intended*
+        // tool, originating appState and whether fallback parser was used —
+        // never the transcript itself (PII / free text).
+        track(EVENT_VOICE_UTTERANCE_ROUTED, {
+          tool: toolCall.name,
+          fromState,
+          fallbackUsed,
+        });
         await dispatch({ type: 'TOOL_CALL', toolCall: normalizeToolCall(toolCall) });
+      }
+      // If nothing routed at all, still record the miss so we can see how
+      // often the LLM + fallback both produce nothing for a given state.
+      if (validCalls.length === 0) {
+        track(EVENT_VOICE_UTTERANCE_ROUTED, {
+          tool: 'none',
+          fromState,
+          fallbackUsed,
+        });
       }
 
       // Speak only the final spokenResponse — partial tokens would clip
@@ -181,6 +208,14 @@ export function useWorkoutSession({
     sessionIdRef.current = id;
 
     const context = await repo.buildVoiceContext(exerciseId);
+
+    // Analytics: small payload, no plan body / no personal context. We
+    // track whether a real plan target drove today's number so we can
+    // tell "user-launched ad-hoc" sessions from "plan-followed" ones.
+    track(EVENT_WORKOUT_STARTED, {
+      todayTarget: context.todayTarget,
+      hasPlan: context.todayTarget !== null,
+    });
 
     setState((prev) => ({
       ...prev,
@@ -229,6 +264,45 @@ export function useWorkoutSession({
     await tts.speak(greeting);
     await dispatch({ type: 'GREETING_DONE' });
   }, [repo, exerciseId, tts, dispatch]);
+
+  // Analytics: fire `set_completed` when the reducer appends to setsCompleted.
+  // The reducer is pure (no side effects); watching length here keeps the
+  // capture next to React state, not the state machine. Skip the initial
+  // mount (length=0) by gating on the ref's previous length.
+  const lastSetsCountRef = useRef(0);
+  useEffect(() => {
+    const next = state.setsCompleted;
+    if (next.length > lastSetsCountRef.current) {
+      const last = next[next.length - 1];
+      track(EVENT_SET_COMPLETED, {
+        setIndex: last.setNumber,
+        reps: last.reps,
+        targetReps: state.targetReps,
+      });
+    }
+    lastSetsCountRef.current = next.length;
+  }, [state.setsCompleted, state.targetReps]);
+
+  // Analytics: fire `session_ended` when the reducer transitions to idle
+  // via record_feedback (the only path that sets userFeedback + flips back
+  // to idle in one event). Guard against re-fires on subsequent renders by
+  // tracking the previous (appState, userFeedback) pair.
+  const sessionEndedFiredRef = useRef(false);
+  useEffect(() => {
+    if (state.appState === 'idle' && state.userFeedback !== null) {
+      if (!sessionEndedFiredRef.current) {
+        track(EVENT_SESSION_ENDED, {
+          totalReps: state.totalReps,
+          setsCount: state.setsCompleted.length,
+          feltCategory: state.userFeedback,
+        });
+        sessionEndedFiredRef.current = true;
+      }
+    } else if (state.appState !== 'idle') {
+      // Reset so a follow-up session in the same hook instance fires again.
+      sessionEndedFiredRef.current = false;
+    }
+  }, [state.appState, state.userFeedback, state.totalReps, state.setsCompleted.length]);
 
   // Wire the transcript handler. We deliberately do NOT call voice.destroy()
   // in cleanup: createVoiceManager binds its engine.onSpeechResults listener

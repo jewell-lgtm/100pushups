@@ -1,5 +1,6 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { IApiClient, SyncSession, SyncSet } from '../api/client';
+import { EVENT_SYNC_FAILED, track } from '../analytics/posthog';
 
 export interface ISyncService {
   syncPending(): Promise<number>;
@@ -86,6 +87,13 @@ export function createSyncService(db: SQLiteDatabase, api: IApiClient): ISyncSer
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn('syncPending: backend rejected batch', err);
+        // Analytics: surface sync failures without leaking the body. We
+        // capture pending count and the error's class name (e.g.
+        // 'TypeError', 'AbortError') — no message, no stack, no PII.
+        track(EVENT_SYNC_FAILED, {
+          pendingCount: sessions.length,
+          errorClass: err instanceof Error ? err.constructor.name : typeof err,
+        });
         return 0;
       }
 

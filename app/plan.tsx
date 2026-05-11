@@ -4,6 +4,7 @@ import { getDatabase } from '../src/db/getDatabase';
 import { createRepository, parseDailyTargets } from '../src/db/repository';
 import { IApiClient } from '../src/api/client';
 import { getApiClient } from '../src/api/getApiClient';
+import { EVENT_PLAN_GENERATED, track } from '../src/analytics/posthog';
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
@@ -74,6 +75,9 @@ export default function PlanScreen() {
         dailyTargets: fresh.dailyTargets,
         notes: fresh.notes,
       });
+      // Analytics: tap-through on a successful generate. Small payload —
+      // exerciseId only; the plan body itself never leaves the device.
+      track(EVENT_PLAN_GENERATED, { exerciseId: 'pushups' });
       setReloadKey((k) => k + 1);
     } catch (err) {
       // eslint-disable-next-line no-console

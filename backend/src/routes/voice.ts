@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { stream } from 'hono/streaming';
 import { IOllamaClient, VoiceContext, OllamaResponse, StreamFrame } from '../ollama.js';
 import { generateSpokenResponse } from '../voiceFallback.js';
+import { trackVoiceRespond } from '../analytics.js';
 
 interface VoiceRequest {
   transcript: string;
@@ -20,6 +21,7 @@ export function voiceRoutes(ollama: IOllamaClient) {
 
     const reqId = c.get('reqId' as never) as string | undefined;
     const deviceId = c.get('deviceId' as never) as string | undefined;
+    const startedAt = Date.now();
     // Privacy: never log the raw transcript — only its length.
     console.log(
       JSON.stringify({
@@ -32,16 +34,19 @@ export function voiceRoutes(ollama: IOllamaClient) {
     );
 
     let result: OllamaResponse;
+    let fallbackUsed = false;
     try {
       result = await ollama.voiceRespond(body.transcript, body.context);
     } catch (err) {
       console.error('Ollama error, returning fallback:', err instanceof Error ? err.message : err);
       result = { toolCalls: [], spokenResponse: '' };
+      fallbackUsed = true;
     }
 
     // If LLM didn't provide a spoken response, generate one from the tool calls
     if (!result.spokenResponse && result.toolCalls.length > 0) {
       result.spokenResponse = generateSpokenResponse(result.toolCalls, body.context);
+      fallbackUsed = true;
     }
 
     console.log(
@@ -52,6 +57,13 @@ export function voiceRoutes(ollama: IOllamaClient) {
         spokenLen: result.spokenResponse.length,
       }),
     );
+
+    trackVoiceRespond({
+      route: '/api/v1/voice/respond',
+      latencyMs: Date.now() - startedAt,
+      fallbackUsed,
+      deviceId,
+    });
 
     return c.json(result);
   });
@@ -65,6 +77,7 @@ export function voiceRoutes(ollama: IOllamaClient) {
 
     const reqId = c.get('reqId' as never) as string | undefined;
     const deviceId = c.get('deviceId' as never) as string | undefined;
+    const startedAt = Date.now();
     console.log(
       JSON.stringify({
         reqId,
@@ -81,6 +94,7 @@ export function voiceRoutes(ollama: IOllamaClient) {
 
     return stream(c, async (s) => {
       let doneFrame: StreamFrame & { type: 'done' } = { type: 'done', toolCalls: [], spokenResponse: '' };
+      let fallbackUsed = false;
 
       try {
         for await (const frame of ollama.voiceRespondStream(body.transcript, body.context)) {
@@ -92,6 +106,7 @@ export function voiceRoutes(ollama: IOllamaClient) {
         }
       } catch (err) {
         console.error('Ollama stream error, returning fallback:', err instanceof Error ? err.message : err);
+        fallbackUsed = true;
       }
 
       // Synthesize a spoken response if the LLM gave tools but no content.
@@ -100,6 +115,7 @@ export function voiceRoutes(ollama: IOllamaClient) {
           ...doneFrame,
           spokenResponse: generateSpokenResponse(doneFrame.toolCalls, body.context),
         };
+        fallbackUsed = true;
       }
 
       await s.write(JSON.stringify(doneFrame) + '\n');
@@ -112,6 +128,13 @@ export function voiceRoutes(ollama: IOllamaClient) {
           spokenLen: doneFrame.spokenResponse.length,
         }),
       );
+
+      trackVoiceRespond({
+        route: '/api/v1/voice/respond/stream',
+        latencyMs: Date.now() - startedAt,
+        fallbackUsed,
+        deviceId,
+      });
     });
   });
 
