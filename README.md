@@ -1,12 +1,40 @@
 # 100 Pushups
 Voice-controlled pushup tracker with LLM coaching.
 
-## Build for Android
+## Run on a phone
 
-The Expo app ships as a custom dev client (not Expo Go) because it
-uses `expo-secure-store` and `expo-sqlite`. `android/` is a generated
-artifact — it's gitignored and re-materialised from `app.json` on
-every prebuild.
+### Fast path — Expo Go
+
+Every native module the app uses (`expo-secure-store`, `expo-sqlite`,
+`expo-speech`, `expo-crypto`, `expo-font`, `expo-linear-gradient`,
+`expo-splash-screen`, `react-native-svg`, `react-native-reanimated`) is
+bundled in Expo Go on SDK 54 — no custom dev client required for the
+MVP.
+
+1. Install **Expo Go** from the Play Store on the phone.
+2. Set `.env.local` for the device build:
+   ```
+   EXPO_PUBLIC_API_BASE=https://pushups.wire.mattjewell.co.uk/
+   EXPO_PUBLIC_REGISTER_API_KEY=<value from k8s — see "Auth secret"
+                                  section below; never commit>
+   ```
+3. Phone and laptop on the same Wi-Fi.
+4. `mise exec -- pnpm start` from the repo root. Metro prints a QR code.
+5. Open Expo Go on the phone, scan the QR — JS bundles and the app
+   launches.
+
+For cellular-only testing (no LAN shortcut), append `--tunnel` to the
+start command. The tunnel hop is slower but verifies the real public
+hostname path.
+
+### Slow path — custom dev client
+
+Only needed if you've added a native module that isn't bundled in
+Expo Go, or for a production-style signed APK. Materializes a real
+`android/` Gradle project and produces a 137MB debug APK.
+
+`android/` is a generated artifact — gitignored, re-materialised from
+`app.json` on every prebuild.
 
 ### Toolchain
 
