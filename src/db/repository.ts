@@ -24,12 +24,29 @@ export interface UpsertWeeklyPlanInput {
   evaluationReps?: number | null;
 }
 
+export interface MonthSessionDay {
+  day: number;
+  totalReps: number;
+  target: number | null;
+}
+
+export interface RecentSessionRow {
+  id: string;
+  startedAt: string;
+  totalReps: number | null;
+  setCount: number | null;
+  userFeedback: string | null;
+}
+
 export interface IRepository {
   getYesterdaySession(exerciseId: string): Promise<{ totalReps: number; setCount: number } | null>;
   getPersonalBest(exerciseId: string): Promise<{ reps: number; date: string } | null>;
   getStreak(exerciseId: string): Promise<number>;
+  getLongestStreak(exerciseId: string): Promise<number>;
   getTodayTarget(exerciseId: string): Promise<number | null>;
   getCurrentWeeklyPlan(exerciseId: string): Promise<WeeklyPlan | null>;
+  getMonthSessions(year: number, month: number, exerciseId: string): Promise<MonthSessionDay[]>;
+  getRecentSessions(limit: number, exerciseId: string): Promise<RecentSessionRow[]>;
   getSessionById(sessionId: string): Promise<Session | null>;
   getSetsForSession(sessionId: string): Promise<WorkoutSet[]>;
   insertSession(session: Omit<Session, 'synced'>): Promise<void>;
@@ -81,6 +98,32 @@ export function createRepository(db: SQLiteDatabase): IRepository {
       return streak;
     },
 
+    // SQLite has no window functions on the version we ship, so the
+    // run-walk happens in JS. Pull distinct session dates ascending,
+    // walk pairs, track the longest consecutive run. Each `date(...)`
+    // value is a plain `YYYY-MM-DD` string interpreted as UTC.
+    async getLongestStreak(exerciseId) {
+      const rows = await db.getAllAsync<{ d: string }>(
+        `SELECT DISTINCT date(started_at) as d FROM sessions
+         WHERE exercise_id = ? ORDER BY d ASC`,
+        [exerciseId],
+      );
+      if (rows.length === 0) return 0;
+      let longest = 1;
+      let current = 1;
+      for (let i = 1; i < rows.length; i++) {
+        const prev = Temporal.PlainDate.from(rows[i - 1].d);
+        const curr = Temporal.PlainDate.from(rows[i].d);
+        if (curr.since(prev).days === 1) {
+          current++;
+          if (current > longest) longest = current;
+        } else {
+          current = 1;
+        }
+      }
+      return longest;
+    },
+
     async getTodayTarget(exerciseId) {
       const dayNames = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
       const today = dayNames[Temporal.Now.plainDateISO().dayOfWeek - 1];
@@ -118,6 +161,84 @@ export function createRepository(db: SQLiteDatabase): IRepository {
         notes: row.notes,
         createdAt: row.created_at,
       };
+    },
+
+    // Aggregates total reps per UTC day across the requested
+    // calendar month, joined left against the weekly_plan that
+    // covers each day so the calendar can colour cells against the
+    // plan target (null when no plan covers that day). `month` is
+    // 1-indexed (Jan=1, Dec=12); we build the half-open window
+    // [first-of-month, first-of-next-month) so the cross-month
+    // boundary stays exclusive.
+    async getMonthSessions(year, month, exerciseId) {
+      const monthStr = String(month).padStart(2, '0');
+      const start = `${year}-${monthStr}-01`;
+      // Compute first-of-next-month as an exclusive upper bound.
+      const next = Temporal.PlainDate.from(start).add({ months: 1 });
+      const end = next.toString();
+
+      const rows = await db.getAllAsync<{ d: string; total_reps: number }>(
+        `SELECT date(started_at) as d, COALESCE(SUM(total_reps), 0) as total_reps
+         FROM sessions
+         WHERE exercise_id = ? AND started_at >= ? AND started_at < ?
+         GROUP BY date(started_at)
+         ORDER BY d ASC`,
+        [exerciseId, start, end],
+      );
+
+      if (rows.length === 0) return [];
+
+      // Resolve the target for each day from the most recent
+      // weekly_plan whose week_start is <= that day. Cheaper to pull
+      // all plans for this exercise once than to issue N subqueries.
+      const plans = await db.getAllAsync<{ week_start: string; daily_targets: string }>(
+        `SELECT week_start, daily_targets FROM weekly_plans
+         WHERE exercise_id = ? AND week_start < ?
+         ORDER BY week_start DESC`,
+        [exerciseId, end],
+      );
+      const parsedPlans = plans.map((p) => ({
+        weekStart: p.week_start,
+        targets: parseDailyTargets(p.daily_targets),
+      }));
+
+      const dayKeys = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+
+      return rows.map((r) => {
+        const date = Temporal.PlainDate.from(r.d);
+        const dayKey = dayKeys[date.dayOfWeek - 1];
+        // First plan whose weekStart <= this date wins (plans are
+        // already sorted desc by weekStart).
+        const plan = parsedPlans.find((p) => p.weekStart <= r.d);
+        const target = plan ? (plan.targets[dayKey] ?? null) : null;
+        return {
+          day: date.day,
+          totalReps: r.total_reps ?? 0,
+          target,
+        };
+      });
+    },
+
+    async getRecentSessions(limit, exerciseId) {
+      const rows = await db.getAllAsync<{
+        id: string;
+        started_at: string;
+        total_reps: number | null;
+        set_count: number | null;
+        user_feedback: string | null;
+      }>(
+        `SELECT id, started_at, total_reps, set_count, user_feedback
+         FROM sessions WHERE exercise_id = ?
+         ORDER BY started_at DESC LIMIT ?`,
+        [exerciseId, limit],
+      );
+      return rows.map((r) => ({
+        id: r.id,
+        startedAt: r.started_at,
+        totalReps: r.total_reps,
+        setCount: r.set_count,
+        userFeedback: r.user_feedback,
+      }));
     },
 
     // Local SQLite has no device_id column — Bearer-derived scoping
