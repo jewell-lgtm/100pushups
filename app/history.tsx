@@ -1,10 +1,10 @@
 import { useCallback, useState } from 'react';
 import {
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
@@ -17,25 +17,31 @@ import type {
   HistoryMonthRecent,
 } from '../src/api/client';
 import { useSync } from '../src/hooks/useSync';
+import { colors } from '../src/theme/colors';
+import { font } from '../src/theme/type';
+import { radii } from '../src/theme/radii';
+import { ScreenHeader } from '../src/components/ScreenHeader';
+import { Card } from '../src/components/Card';
 
-// Plain-primitive functional cut (Phase 11.5). The sage/sageSoft theme
-// tokens, Fraunces font, and CalendarGrid component live on a
-// design-system branch that hasn't merged yet — the re-skin lands as
-// part of Phase 12.6. Until then we re-use the existing dark palette
-// from `app/index.tsx` so this screen feels native to the app:
-//   bg            #16213e (matches Stats/Plan)
-//   card          #1a1a2e
-//   accent        #e94560 (full day)
-//   accentMuted   rgba(233,69,96,0.35) (partial day)
-//   ink           #fff
-//   inkDim        #a0a0b0
+// Phase 12.6 re-skin: cream/sage Breath tokens replace the previous
+// dark `#16213e` palette. Visual contract follows
+// `design/direction-b.jsx › B_HistoryScreen` (lines 231-330):
+//   - ScreenHeader with kicker "PROGRESS" and Fraunces month label
+//   - Sage streak banner card (current streak big serif + longest)
+//   - 7-column calendar grid (sage = full, sageSoft = partial, faded
+//     surfaceAlt = empty, 2px ink border = today)
+//   - Recent rows separated by hairline borders inside a Card
 //
-// "Today" is marked with a 2px white inner border (the design doc
-// calls for `ink` 2px — we pick the analogous fg colour from the dark
-// palette). When the design-system merges, the CalendarGrid component
-// will take over and these literals get dropped.
+// The `MonthNav` and `CalendarGrid` molecules exist on main but don't
+// expose the per-button / per-cell `testID` props the Playwright suite
+// (`e2e/history.spec.ts`) plus integration-tests rely on. Per Phase
+// 12.6 guidance (don't edit molecules), this screen re-implements
+// both visually inline using the exact same tokens and dimensions so
+// the design is identical but testIDs (`history-prev-month`,
+// `history-next-month`, `history-day-N`) stay addressable.
 
-const DAY_HEADERS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+// Sunday-first week labels per design ref (B_HistoryScreen line 279).
+const WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 const EXERCISE_ID = 'pushups';
 
 interface MonthState {
@@ -116,76 +122,123 @@ export default function HistoryScreen() {
       style={styles.container}
       contentContainerStyle={styles.content}
       refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#e94560" />
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          tintColor={colors.sage}
+        />
       }
     >
-      <MonthHeader
-        label={monthLabel(month)}
-        onPrev={() => setMonth((m) => shiftMonth(m, -1))}
-        onNext={canGoNext ? () => setMonth((m) => shiftMonth(m, 1)) : null}
+      <ScreenHeader
+        kicker="PROGRESS"
+        title={monthLabel(month)}
+        trailing={
+          <MonthChevrons
+            onPrev={() => setMonth((m) => shiftMonth(m, -1))}
+            onNext={canGoNext ? () => setMonth((m) => shiftMonth(m, 1)) : null}
+          />
+        }
       />
 
       <StreakBanner current={streak} longest={longest} />
 
-      <CalendarGrid state={month} days={days} />
+      <CalendarGridInline state={month} days={days} />
 
       <RecentList sessions={recent} />
     </ScrollView>
   );
 }
 
-function MonthHeader({
-  label,
+// MonthNav-equivalent — see top-of-file rationale. Two 34px circle
+// buttons matching `src/components/MonthNav.tsx` styling, with the
+// per-button testIDs Playwright + e2e tests rely on.
+function MonthChevrons({
   onPrev,
   onNext,
 }: {
-  label: string;
   onPrev: () => void;
   onNext: (() => void) | null;
 }) {
   return (
-    <View style={styles.headerRow}>
-      <TouchableOpacity
+    <View style={styles.chevronRow}>
+      <Pressable
         testID="history-prev-month"
+        accessibilityRole="button"
+        accessibilityLabel="Previous month"
         onPress={onPrev}
-        style={styles.chevronButton}
+        style={({ pressed }) => [
+          styles.chevronButton,
+          pressed && styles.chevronPressed,
+        ]}
       >
-        <Text style={styles.chevron}>‹</Text>
-      </TouchableOpacity>
-      <Text style={styles.monthLabel}>{label}</Text>
-      <TouchableOpacity
+        <Text style={styles.chevronGlyph}>‹</Text>
+      </Pressable>
+      <Pressable
         testID="history-next-month"
+        accessibilityRole="button"
+        accessibilityLabel="Next month"
+        accessibilityState={{ disabled: onNext == null }}
         onPress={onNext ?? undefined}
-        disabled={!onNext}
-        style={[styles.chevronButton, !onNext && styles.chevronDisabled]}
+        disabled={onNext == null}
+        style={({ pressed }) => [
+          styles.chevronButton,
+          onNext == null && styles.chevronDisabled,
+          pressed && onNext != null && styles.chevronPressed,
+        ]}
       >
-        <Text style={[styles.chevron, !onNext && styles.chevronDisabledText]}>›</Text>
-      </TouchableOpacity>
+        <Text style={styles.chevronGlyph}>›</Text>
+      </Pressable>
     </View>
   );
 }
 
+// Sage Card with the current streak as a big Fraunces number plus a
+// muted "Longest {n}" caption on the right. Mirrors the design ref
+// layout (`B_HistoryScreen` lines 262-274).
 function StreakBanner({ current, longest }: { current: number; longest: number }) {
   return (
-    <View style={styles.streakBanner} testID="history-streak-banner">
-      <Text style={styles.streakText}>
-        {current} day streak — longest {longest}
-      </Text>
-    </View>
+    <Card
+      variant="sage"
+      testID="history-streak-banner"
+      style={styles.streakCard}
+    >
+      <View style={styles.streakInner}>
+        <View style={styles.streakLeft}>
+          <Text style={styles.streakKicker}>CURRENT STREAK</Text>
+          <View style={styles.streakNumberRow}>
+            <Text style={styles.streakNumber}>{current}</Text>
+            <Text style={styles.streakUnit}>{current === 1 ? 'day' : 'days'}</Text>
+          </View>
+        </View>
+        <View style={styles.streakRight}>
+          <Text style={styles.streakRightLabel}>Longest</Text>
+          <Text style={styles.streakRightValue}>{longest} d</Text>
+        </View>
+      </View>
+    </Card>
   );
 }
 
-function CalendarGrid({
+// CalendarGrid-equivalent — same visual contract as
+// `src/components/CalendarGrid.tsx` but rendered inline so each cell
+// can carry the `history-day-N` testID and the whole grid carries
+// `history-calendar-grid`. Sunday-first; pads the first row so the
+// 1st lines up under its weekday column.
+function CalendarGridInline({
   state,
   days,
 }: {
   state: MonthState;
   days: HistoryMonthDay[];
 }) {
-  const firstOfMonth = Temporal.PlainDate.from({ year: state.year, month: state.month, day: 1 });
-  // dayOfWeek: Mon=1 .. Sun=7. We render Mon-first, so leading blank
-  // count = dayOfWeek - 1.
-  const leadingBlanks = firstOfMonth.dayOfWeek - 1;
+  const firstOfMonth = Temporal.PlainDate.from({
+    year: state.year,
+    month: state.month,
+    day: 1,
+  });
+  // `dayOfWeek` is Mon=1..Sun=7; the design grid is Sunday-first so a
+  // Sunday-start needs 0 leading blanks, Monday needs 1, etc.
+  const leadingBlanks = firstOfMonth.dayOfWeek % 7;
   const daysInMonth = firstOfMonth.daysInMonth;
   const today = Temporal.Now.plainDateISO();
   const todayDay =
@@ -194,53 +247,73 @@ function CalendarGrid({
   const byDay = new Map<number, HistoryMonthDay>();
   for (const d of days) byDay.set(d.day, d);
 
-  // Pad trailing blanks so the grid renders as full weeks. Total
-  // cells = leading + daysInMonth + trailing, rounded up to 7.
+  // Pad trailing blanks so the grid renders as full 7-cell weeks.
   const totalCells = leadingBlanks + daysInMonth;
   const trailingBlanks = (7 - (totalCells % 7)) % 7;
 
-  const cells: ({ kind: 'blank' } | { kind: 'day'; day: number })[] = [];
+  type Cell = { kind: 'blank' } | { kind: 'day'; day: number };
+  const cells: Cell[] = [];
   for (let i = 0; i < leadingBlanks; i++) cells.push({ kind: 'blank' });
   for (let d = 1; d <= daysInMonth; d++) cells.push({ kind: 'day', day: d });
   for (let i = 0; i < trailingBlanks; i++) cells.push({ kind: 'blank' });
 
   return (
-    <View>
+    <View style={styles.gridWrap}>
       <View style={styles.weekdayRow}>
-        {DAY_HEADERS.map((h, i) => (
-          <Text key={i} style={styles.weekdayLabel}>{h}</Text>
+        {WEEKDAY_LABELS.map((label, i) => (
+          <Text key={i} style={styles.weekdayLabel}>
+            {label}
+          </Text>
         ))}
       </View>
       <View style={styles.grid} testID="history-calendar-grid">
         {cells.map((c, i) => {
           if (c.kind === 'blank') {
-            return <View key={`b-${i}`} style={[styles.cell, styles.cellBlank]} />;
+            return <View key={`b-${i}`} style={styles.cellSlot} />;
           }
           const entry = byDay.get(c.day);
           const isToday = todayDay === c.day;
-          let cellStyle = styles.cellEmpty;
+          // Match `CalendarGrid` semantics: full = totalReps ≥ target
+          // (or any reps if no target), partial = some reps below
+          // target, empty = no entry.
+          let isComplete = false;
+          let isPartial = false;
           if (entry) {
             const reachedTarget =
               entry.target !== null
                 ? entry.totalReps >= entry.target
                 : entry.totalReps > 0;
-            cellStyle = reachedTarget ? styles.cellFull : styles.cellPartial;
+            isComplete = reachedTarget;
+            isPartial = !reachedTarget && entry.totalReps > 0;
           }
           return (
-            <TouchableOpacity
-              key={c.day}
-              testID={`history-day-${c.day}`}
-              activeOpacity={entry ? 0.6 : 1}
-              onPress={() => {
-                // No-op for this commit — detail navigation is out of
-                // scope (Phase 11.5 leaves the tap wired but inert so
-                // future commits can hook it up without touching
-                // layout).
-              }}
-              style={[styles.cell, cellStyle, isToday && styles.cellToday]}
-            >
-              <Text style={styles.cellText}>{c.day}</Text>
-            </TouchableOpacity>
+            <View key={c.day} style={styles.cellSlot}>
+              <Pressable
+                testID={`history-day-${c.day}`}
+                accessibilityRole="button"
+                onPress={() => {
+                  // Tap is wired but inert (detail navigation out of
+                  // scope — same as 11.5).
+                }}
+                style={[
+                  styles.cell,
+                  isComplete && styles.cellComplete,
+                  isPartial && styles.cellPartial,
+                  !isComplete && !isPartial && styles.cellRest,
+                  isToday && styles.cellToday,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.cellNumber,
+                    isComplete && styles.cellNumberComplete,
+                  ]}
+                >
+                  {c.day}
+                </Text>
+                {isPartial && <View style={styles.partialDot} />}
+              </Pressable>
+            </View>
           );
         })}
       </View>
@@ -248,148 +321,241 @@ function CalendarGrid({
   );
 }
 
+// Three most-recent sessions stacked inside a single surface Card,
+// separated by hairline borders per the design ref (`B_HistoryScreen`
+// lines 309-327). `user_feedback` (when present) renders as italic
+// muted text below the date/reps row.
 function RecentList({ sessions }: { sessions: HistoryMonthRecent[] }) {
-  if (sessions.length === 0) {
-    return (
-      <View style={styles.recentSection}>
-        <Text style={styles.recentHeader}>Recent</Text>
-        <Text style={styles.empty}>No workouts yet. Go do some pushups!</Text>
-      </View>
-    );
-  }
+  const top = sessions.slice(0, 3);
+
   return (
-    <View style={styles.recentSection}>
+    <View style={styles.recentWrap}>
       <Text style={styles.recentHeader}>Recent</Text>
-      {sessions.map((s) => (
-        <View key={s.id} style={styles.recentRow}>
-          <View style={styles.recentRowTop}>
-            <Text style={styles.recentDate}>
-              {new Date(s.startedAt).toLocaleDateString()}
-            </Text>
-            <Text style={styles.recentReps}>
-              {s.totalReps ?? 0} <Text style={styles.recentRepsLabel}>reps</Text>
-            </Text>
-          </View>
-          {s.userFeedback && (
-            <Text style={styles.recentFeedback}>{s.userFeedback}</Text>
-          )}
-        </View>
-      ))}
+      {top.length === 0 ? (
+        <Card>
+          <Text style={styles.empty}>No workouts yet. Go do some pushups.</Text>
+        </Card>
+      ) : (
+        <Card style={styles.recentCard}>
+          {top.map((s, i) => (
+            <View
+              key={s.id}
+              style={[
+                styles.recentRow,
+                i < top.length - 1 && styles.recentRowDivider,
+              ]}
+            >
+              <View style={styles.recentRowTop}>
+                <Text style={styles.recentDate}>
+                  {new Date(s.startedAt).toLocaleDateString(undefined, {
+                    weekday: 'short',
+                    month: 'short',
+                    day: 'numeric',
+                  })}
+                </Text>
+                <Text style={styles.recentReps}>{s.totalReps ?? 0}</Text>
+              </View>
+              <View style={styles.recentRowBottom}>
+                {s.userFeedback ? (
+                  <Text style={styles.recentFeedback} numberOfLines={2}>
+                    {s.userFeedback}
+                  </Text>
+                ) : (
+                  <View style={{ flex: 1 }} />
+                )}
+                <Text style={styles.recentMeta}>
+                  {s.setCount ?? 0} {s.setCount === 1 ? 'set' : 'sets'}
+                </Text>
+              </View>
+            </View>
+          ))}
+        </Card>
+      )}
     </View>
   );
 }
 
+const CELL_GAP = 6;
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#16213e',
+    backgroundColor: colors.bg,
   },
   content: {
-    padding: 16,
+    paddingHorizontal: 22,
+    paddingTop: 22,
     paddingBottom: 40,
   },
-  headerRow: {
+
+  // ── MonthChevrons ──────────────────────────────────────────
+  chevronRow: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  chevronButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+  chevronDisabled: {
+    opacity: 0.4,
+  },
+  chevronPressed: {
+    backgroundColor: colors.surfaceAlt,
+  },
+  chevronGlyph: {
+    fontFamily: font.sans,
+    fontSize: 16,
+    color: colors.ink,
+    lineHeight: 18,
+  },
+
+  // ── StreakBanner ───────────────────────────────────────────
+  streakCard: {
+    marginTop: 14,
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+    borderRadius: radii.lg,
+  },
+  streakInner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 12,
   },
-  chevronButton: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 22,
-    backgroundColor: '#1a1a2e',
+  streakLeft: {
+    flexShrink: 1,
   },
-  chevronDisabled: {
-    opacity: 0.3,
+  streakKicker: {
+    fontFamily: font.sans,
+    fontSize: 11,
+    color: colors.surface,
+    opacity: 0.7,
+    letterSpacing: 11 * 0.15,
+    textTransform: 'uppercase',
   },
-  chevron: {
-    color: '#fff',
-    fontSize: 22,
-    lineHeight: 24,
+  streakNumberRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
+    marginTop: 4,
   },
-  chevronDisabledText: {
-    color: '#a0a0b0',
+  streakNumber: {
+    fontFamily: font.serif,
+    fontSize: 44,
+    color: colors.surface,
+    lineHeight: 44,
   },
-  monthLabel: {
-    color: '#fff',
+  streakUnit: {
+    fontFamily: font.serifItalic,
     fontSize: 18,
-    fontWeight: '600',
+    color: colors.surface,
+    opacity: 0.85,
   },
-  streakBanner: {
-    backgroundColor: '#1a1a2e',
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    marginBottom: 16,
-    alignItems: 'center',
+  streakRight: {
+    alignItems: 'flex-end',
   },
-  streakText: {
-    color: '#a0a0b0',
-    fontSize: 13,
+  streakRightLabel: {
+    fontFamily: font.sans,
+    fontSize: 12,
+    color: colors.surface,
+    opacity: 0.85,
+  },
+  streakRightValue: {
+    fontFamily: font.serif,
+    fontSize: 22,
+    color: colors.surface,
+    marginTop: 2,
+  },
+
+  // ── CalendarGrid ───────────────────────────────────────────
+  gridWrap: {
+    marginTop: 14,
   },
   weekdayRow: {
     flexDirection: 'row',
-    marginBottom: 6,
+    marginBottom: CELL_GAP,
   },
   weekdayLabel: {
     flex: 1,
+    fontFamily: font.sans,
+    fontSize: 10,
+    color: colors.inkFaint,
     textAlign: 'center',
-    color: '#a0a0b0',
-    fontSize: 11,
-    fontWeight: '600',
+    letterSpacing: 10 * 0.1,
   },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginBottom: 24,
   },
-  cell: {
+  cellSlot: {
     width: `${100 / 7}%`,
     aspectRatio: 1,
+    padding: CELL_GAP / 2,
+  },
+  cell: {
+    flex: 1,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 2,
-  },
-  cellBlank: {
     backgroundColor: 'transparent',
   },
-  cellEmpty: {
-    // No fill — just show the date in dim ink.
+  cellComplete: {
+    backgroundColor: colors.sage,
   },
   cellPartial: {
-    backgroundColor: 'rgba(233,69,96,0.35)',
-    borderRadius: 8,
+    backgroundColor: colors.sageSoft,
   },
-  cellFull: {
-    backgroundColor: '#e94560',
-    borderRadius: 8,
+  cellRest: {
+    backgroundColor: colors.surfaceAlt,
+    opacity: 0.4,
   },
   cellToday: {
     borderWidth: 2,
-    borderColor: '#fff',
-    borderRadius: 8,
+    borderColor: colors.ink,
   },
-  cellText: {
-    color: '#fff',
-    fontSize: 13,
+  cellNumber: {
+    fontFamily: font.serif,
+    fontSize: 14,
+    color: colors.ink,
   },
-  recentSection: {
-    marginTop: 8,
+  cellNumberComplete: {
+    color: colors.surface,
+  },
+  partialDot: {
+    position: 'absolute',
+    bottom: 3,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.ink,
+    opacity: 0.4,
+  },
+
+  // ── RecentList ─────────────────────────────────────────────
+  recentWrap: {
+    marginTop: 20,
   },
   recentHeader: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 8,
+    fontFamily: font.serif,
+    fontSize: 18,
+    color: colors.ink,
+    marginBottom: 10,
+  },
+  recentCard: {
+    paddingVertical: 4,
   },
   recentRow: {
-    backgroundColor: '#1a1a2e',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 8,
+    paddingVertical: 14,
+  },
+  recentRowDivider: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
   recentRowTop: {
     flexDirection: 'row',
@@ -397,30 +563,37 @@ const styles = StyleSheet.create({
     alignItems: 'baseline',
   },
   recentDate: {
-    color: '#fff',
+    fontFamily: font.sansMedium,
     fontSize: 14,
-    fontWeight: '600',
+    color: colors.ink,
   },
   recentReps: {
-    color: '#e94560',
-    fontSize: 20,
-    fontWeight: 'bold',
+    fontFamily: font.serif,
+    fontSize: 22,
+    color: colors.ink,
   },
-  recentRepsLabel: {
-    color: '#a0a0b0',
-    fontSize: 11,
-    fontWeight: 'normal',
+  recentRowBottom: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    marginTop: 4,
+    gap: 12,
   },
   recentFeedback: {
-    color: '#a0a0b0',
-    fontStyle: 'italic',
+    flexShrink: 1,
+    fontFamily: font.sansItalic,
     fontSize: 12,
-    marginTop: 4,
+    color: colors.inkDim,
+  },
+  recentMeta: {
+    fontFamily: font.sans,
+    fontSize: 11,
+    color: colors.inkFaint,
   },
   empty: {
-    color: '#a0a0b0',
+    fontFamily: font.sans,
     fontSize: 14,
+    color: colors.inkDim,
     textAlign: 'center',
-    marginTop: 12,
   },
 });
