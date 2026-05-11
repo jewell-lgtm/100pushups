@@ -82,7 +82,6 @@ export default function RootLayout() {
               <Stack.Screen name="workout" options={{ title: 'Workout', headerShown: false }} />
               <Stack.Screen name="complete" options={{ title: 'Complete', headerShown: false }} />
               <Stack.Screen name="history" options={{ title: 'History' }} />
-              <Stack.Screen name="plan" options={{ title: 'Weekly Plan' }} />
             </Stack>
           </View>
         </View>
