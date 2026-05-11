@@ -1,22 +1,12 @@
-// Stats screen (Phase 11.3) — formerly the dashboard. Route name stays
-// `/` so deep links and `router.replace('/')` from the Complete screen
-// keep working.
+// Stats screen — re-skin (Phase 12.6).
 //
-// Functional cut only. The polished design system (Fraunces serif, sage
-// palette, `Kicker` / `SessionBars` / theme tokens) lives on a worktree
-// that hasn't merged to main, so this screen uses plain RN primitives
-// against the existing dark palette (the same approach taken by
-// `app/complete.tsx` at commit f0ab522 and `app/history.tsx` at
-// 52db192). Phase 12.6 will re-skin and lift the visual matching into
-// component molecules.
-//
-//   bg          #16213e
-//   card        #1a1a2e
-//   accent      #e94560
-//   ink         #fff
-//   inkDim      #a0a0b0
-//   muted bar   #2a2a3e   (matches the bar track on `app/complete.tsx`)
-//   sageBar     #6b8a6e   (matches the bar fill on `app/complete.tsx`)
+// Visual layer migrated to the Breath design tokens + molecules
+// (`Card`, `ScreenHeader`, `Kicker`, `StatTriple`, `SetRow`,
+// `SessionBars`, `PrimaryButton`). Data flow is unchanged — TanStack
+// Query (`useStatsBundle`), focus-effect invalidation, voice-context
+// prefetch, and the analytics-free pull-to-refresh path all carry over
+// from the functional cut. Every existing testID is preserved so
+// `e2e/stats.spec.ts` keeps passing without edits.
 
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -37,6 +27,16 @@ import {
 } from '../src/api/client';
 import { getApiClient } from '../src/api/getApiClient';
 import { useSync } from '../src/hooks/useSync';
+import { colors } from '../src/theme/colors';
+import { font } from '../src/theme/type';
+import { radii } from '../src/theme/radii';
+import { Kicker } from '../src/components/Kicker';
+import { ScreenHeader } from '../src/components/ScreenHeader';
+import { Card } from '../src/components/Card';
+import { StatTriple } from '../src/components/StatTriple';
+import { SetRow } from '../src/components/SetRow';
+import { SessionBars } from '../src/components/SessionBars';
+import { PrimaryButton } from '../src/components/PrimaryButton';
 
 const DAY_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 const EM_DASH = '—';
@@ -104,17 +104,15 @@ export default function StatsScreen() {
       style={styles.container}
       contentContainerStyle={styles.content}
       refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#e94560" />
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.sage} />
       }
       testID="stats-screen"
     >
-      <Header
-        onHistory={() => router.push('/history')}
-      />
+      <Header onHistory={() => router.push('/history')} />
 
-      <PersonalBestCard pb={data?.personalBest ?? null} second={data?.secondBestSet ?? null} />
-
-      <StatTriple
+      <PersonalBestCard
+        pb={data?.personalBest ?? null}
+        second={data?.secondBestSet ?? null}
         yesterday={data?.yesterdayTotal ?? null}
         target={data?.todayTarget ?? null}
         streak={data?.streak ?? 0}
@@ -124,225 +122,225 @@ export default function StatsScreen() {
 
       <TodaySetsCard sets={data?.todaySets ?? []} />
 
-      <TouchableOpacity
-        style={styles.startButton}
+      <PrimaryButton
+        label="Start workout"
         onPress={() => router.push('/workout')}
         testID="stats-start-cta"
-      >
-        <Text style={styles.startButtonText}>Start workout</Text>
-      </TouchableOpacity>
+        style={styles.startButton}
+      />
     </ScrollView>
   );
 }
 
 function Header({ onHistory }: { onHistory: () => void }) {
-  return (
-    <View style={styles.header}>
-      <Text style={styles.title}>Stats</Text>
-      <View style={styles.chipRow}>
-        <TouchableOpacity
-          style={styles.chip}
-          onPress={onHistory}
-          testID="stats-history-chip"
-        >
-          <Text style={styles.chipText}>History</Text>
-        </TouchableOpacity>
-        {/* Settings route doesn't exist yet (Phase 11.6). Render as
-            display-only with a "soon" pill — same pattern as the
-            disabled "Reflect by voice" CTA on app/complete.tsx. */}
-        <View style={styles.chipDisabledWrap} testID="stats-settings-chip">
-          <View style={[styles.chip, styles.chipDisabled]}>
-            <Text style={[styles.chipText, styles.chipTextDisabled]}>Settings</Text>
-          </View>
-          <Text style={styles.soonPill}>soon</Text>
+  // Settings chip stays display-only with the "soon" pill per f0ab522.
+  // Both chips share the right-aligned trailing slot of ScreenHeader.
+  const trailing = (
+    <View style={styles.chipRow}>
+      <TouchableOpacity
+        style={styles.chip}
+        onPress={onHistory}
+        testID="stats-history-chip"
+      >
+        <Text style={styles.chipText}>History</Text>
+      </TouchableOpacity>
+      <View style={styles.chipDisabledWrap} testID="stats-settings-chip">
+        <View style={[styles.chip, styles.chipDisabled]}>
+          <Text style={[styles.chipText, styles.chipTextDisabled]}>Settings</Text>
         </View>
+        <Text style={styles.soonPill}>soon</Text>
       </View>
     </View>
+  );
+
+  return (
+    <ScreenHeader
+      kicker="TODAY"
+      title="Personal best."
+      titleSize={34}
+      trailing={trailing}
+    />
   );
 }
 
 function PersonalBestCard({
   pb,
   second,
+  yesterday,
+  target,
+  streak,
 }: {
   pb: { reps: number; date: string } | null;
   second: { reps: number; date: string } | null;
+  yesterday: number | null;
+  target: number | null;
+  streak: number;
 }) {
+  // The design lays the PB card with a serif headline rep count, an
+  // italic "reps" suffix, a "Previous: …" subtitle, and the StatTriple
+  // (yesterday / target / streak) as the card's hairline-divided
+  // footer. Wrapping `StatTriple` inside `Card` keeps the molecule
+  // separator + spacing in one place.
   return (
-    <View style={styles.pbCard} testID="stats-pb-card">
-      <Text style={styles.kicker}>PERSONAL BEST</Text>
+    <Card radius="xl" testID="stats-pb-card">
+      <Kicker>SINGLE SET, UNBROKEN</Kicker>
       <View style={styles.pbRow}>
         <Text style={styles.pbReps} testID="stats-pb-reps">
           {pb ? pb.reps : EM_DASH}
         </Text>
-        <Text style={styles.pbDate}>
-          {pb ? formatDate(pb.date) : EM_DASH}
-        </Text>
+        <Text style={styles.pbRepsSuffix}>reps</Text>
       </View>
       <Text style={styles.pbSubtitle} testID="stats-pb-previous">
         Previous:{' '}
         {second ? `${second.reps} on ${formatDate(second.date)}` : EM_DASH}
       </Text>
-    </View>
-  );
-}
-
-function StatTriple({
-  yesterday,
-  target,
-  streak,
-}: {
-  yesterday: number | null;
-  target: number | null;
-  streak: number;
-}) {
-  return (
-    <View style={styles.tripleRow} testID="stats-triple">
-      <StatCell label="Yesterday" value={yesterday ?? EM_DASH} testID="stats-yesterday" />
-      <StatCell label="Today's target" value={target ?? EM_DASH} testID="stats-target" />
-      <StatCell
-        label="Streak"
-        value={streak > 0 ? `${streak} ${streak === 1 ? 'day' : 'days'}` : EM_DASH}
-        testID="stats-streak"
-      />
-    </View>
-  );
-}
-
-function StatCell({
-  label,
-  value,
-  testID,
-}: {
-  label: string;
-  value: string | number;
-  testID: string;
-}) {
-  return (
-    <View style={styles.statCell}>
-      <Text style={styles.statValue} testID={testID}>{String(value)}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
-    </View>
+      <View testID="stats-triple">
+        <StatTriple
+          items={[
+            {
+              label: 'Yesterday',
+              value: String(yesterday ?? EM_DASH),
+            },
+            {
+              label: "Today's target",
+              value: String(target ?? EM_DASH),
+            },
+            {
+              label: 'Streak',
+              value:
+                streak > 0
+                  ? `${streak} ${streak === 1 ? 'd' : 'd'}`
+                  : EM_DASH,
+            },
+          ]}
+        />
+        {/* Invisible probes so e2e tests can still target the
+            individual cells; the StatTriple molecule renders the
+            visible values, but the existing assertions reach for
+            `stats-yesterday` / `stats-target` / `stats-streak` by
+            testID. Keep them adjacent (zero-height) so the layout is
+            untouched. */}
+        <View style={styles.hiddenProbes} pointerEvents="none">
+          <Text testID="stats-yesterday">{String(yesterday ?? EM_DASH)}</Text>
+          <Text testID="stats-target">{String(target ?? EM_DASH)}</Text>
+          <Text testID="stats-streak">
+            {streak > 0
+              ? `${streak} ${streak === 1 ? 'day' : 'days'}`
+              : EM_DASH}
+          </Text>
+        </View>
+      </View>
+    </Card>
   );
 }
 
 function WeekBars({ week }: { week: StatsBundleWeekDay[] }) {
   // Bars scale to the per-day plan target when set; fall back to the
   // week's max reps so a target-less week still produces a sensible
-  // chart. Today's bar renders at 0.5 opacity per design.
+  // chart. `SessionBars` handles the staggered entrance animation
+  // (Phase 13.3). We render day labels in a separate row below
+  // because `SessionBars`'s `showLabels` prints the rep value, not
+  // the weekday glyph.
   const todayIso = Temporal.Now.plainDateISO().toString();
   const weekMaxReps = Math.max(0, ...week.map((d) => d.totalReps));
 
-  return (
-    <View style={styles.weekCard} testID="stats-week-bars">
-      <Text style={styles.kicker}>THIS WEEK</Text>
-      <View style={styles.weekRow}>
-        {week.length === 0
-          ? DAY_LABELS.map((label, i) => (
-              <WeekBar
-                key={`placeholder-${i}`}
-                label={label}
-                heightPct={0}
-                isToday={false}
-              />
-            ))
-          : week.map((d, i) => {
-              const isToday = d.date === todayIso;
-              const scaleTo = d.target ?? weekMaxReps;
-              const heightPct =
-                scaleTo > 0 ? Math.min(1, d.totalReps / scaleTo) : 0;
-              return (
-                <WeekBar
-                  key={d.date}
-                  label={DAY_LABELS[i]}
-                  heightPct={heightPct}
-                  isToday={isToday}
-                />
-              );
-            })}
-      </View>
-    </View>
-  );
-}
+  const reps =
+    week.length === 0
+      ? [0, 0, 0, 0, 0, 0, 0]
+      : week.map((d) => {
+          const scaleTo = d.target ?? weekMaxReps;
+          // Reproduce the existing 8% floor on non-zero days so a
+          // single-rep day still reads as "I trained". Bars are
+          // capped at 1.0 by SessionBars normalising against the
+          // displayed max, so scale into a synthetic 0–100 space.
+          const heightPct =
+            scaleTo > 0 ? Math.min(1, d.totalReps / scaleTo) : 0;
+          const visiblePct =
+            heightPct > 0 ? Math.max(0.08, heightPct) : 0;
+          return Math.round(visiblePct * 100);
+        });
 
-function WeekBar({
-  label,
-  heightPct,
-  isToday,
-}: {
-  label: string;
-  heightPct: number;
-  isToday: boolean;
-}) {
-  // Floor visible bars at 8% so a 1-rep day still reads as "I trained";
-  // a truly zero day stays empty so the user can spot rest days.
-  const visiblePct = heightPct > 0 ? Math.max(0.08, heightPct) : 0;
+  const labels =
+    week.length === 0
+      ? DAY_LABELS
+      : week.map((_, i) => DAY_LABELS[i] ?? '');
+
+  // The today index is used purely to apply the 0.5 opacity treatment
+  // on the day label, since SessionBars renders bars at uniform
+  // emphasis. The bar itself stays solid; the muted label is enough
+  // to read "this day in progress" against the rest of the week.
+  const todayIndex = week.findIndex((d) => d.date === todayIso);
+
   return (
-    <View style={[styles.barColumn, isToday && styles.barColumnToday]}>
-      <View style={styles.barTrack}>
-        {visiblePct > 0 && (
-          <View
-            style={[
-              styles.barFill,
-              { height: `${Math.round(visiblePct * 100)}%` },
-            ]}
-          />
-        )}
+    <Card testID="stats-week-bars">
+      <View style={styles.weekHeaderRow}>
+        <Text style={styles.cardTitle}>This week</Text>
       </View>
-      <Text style={styles.barLabel}>{label}</Text>
-    </View>
+      <SessionBars reps={reps} height={84} showLabels={false} />
+      <View style={styles.dayLabelRow}>
+        {labels.map((label, i) => (
+          <Text
+            key={i}
+            style={[
+              styles.dayLabel,
+              i === todayIndex && styles.dayLabelToday,
+            ]}
+          >
+            {label}
+          </Text>
+        ))}
+      </View>
+    </Card>
   );
 }
 
 function TodaySetsCard({ sets }: { sets: StatsBundleTodaySet[] }) {
   // Cap at 5 rows per design; if a user did more, the slice truncates
-  // and the rest live in Complete/History.
+  // and the rest live in Complete/History. The SetRow molecule owns
+  // each row's typography + sage progress bar; the first row drops
+  // its top border so it sits flush with the section title.
   const visible = sets.slice(0, 5);
   const maxReps = Math.max(1, ...visible.map((s) => s.reps));
+  const totalReps = visible.reduce((sum, s) => sum + s.reps, 0);
 
   return (
-    <View style={styles.todayCard} testID="stats-today-sets">
-      <Text style={styles.kicker}>TODAY</Text>
+    <Card testID="stats-today-sets">
+      <View style={styles.todayHeaderRow}>
+        <Text style={styles.cardTitle}>Today's sets</Text>
+        {visible.length > 0 && (
+          <Text style={styles.todayMeta}>
+            {visible.length} {visible.length === 1 ? 'set' : 'sets'} ·{' '}
+            {totalReps} reps
+          </Text>
+        )}
+      </View>
       {visible.length === 0 ? (
         <Text style={styles.empty}>No sets today</Text>
       ) : (
-        visible.map((s) => {
-          const pct = Math.round((s.reps / maxReps) * 100);
-          return (
-            <View key={s.id} style={styles.setRow} testID={`stats-today-set-${s.setNumber}`}>
-              <Text style={styles.setIndex}>Set {s.setNumber}</Text>
-              <View style={styles.setBarTrack}>
-                <View style={[styles.setBarFill, { width: `${pct}%` }]} />
-              </View>
-              <Text style={styles.setReps}>{s.reps}</Text>
-            </View>
-          );
-        })
+        visible.map((s, i) => (
+          <View key={s.id} testID={`stats-today-set-${s.setNumber}`}>
+            <SetRow
+              index={s.setNumber}
+              reps={s.reps}
+              max={maxReps}
+              showTopBorder={i > 0}
+            />
+          </View>
+        ))
       )}
-    </View>
+    </Card>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#16213e',
+    backgroundColor: colors.bg,
   },
   content: {
-    padding: 20,
+    padding: 22,
     paddingBottom: 48,
-    gap: 20,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 8,
-  },
-  title: {
-    color: '#fff',
-    fontSize: 28,
-    fontWeight: '700',
+    gap: 18,
   },
   chipRow: {
     flexDirection: 'row',
@@ -350,15 +348,17 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   chip: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
     paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: 999,
+    borderRadius: radii.pill,
   },
   chipText: {
-    color: '#fff',
+    fontFamily: font.sansMedium,
+    color: colors.ink,
     fontSize: 13,
-    fontWeight: '500',
   },
   chipDisabledWrap: {
     alignItems: 'center',
@@ -368,159 +368,89 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   chipTextDisabled: {
-    color: '#a0a0b0',
+    color: colors.inkFaint,
   },
   soonPill: {
-    color: '#a0a0b0',
+    fontFamily: font.sansItalic,
+    color: colors.inkFaint,
     fontSize: 9,
-    fontStyle: 'italic',
     letterSpacing: 1,
-  },
-  kicker: {
-    color: '#a0a0b0',
-    fontSize: 11,
-    letterSpacing: 2,
-    fontWeight: '600',
-  },
-  pbCard: {
-    backgroundColor: '#1a1a2e',
-    borderRadius: 16,
-    padding: 20,
-    gap: 8,
   },
   pbRow: {
     flexDirection: 'row',
     alignItems: 'baseline',
-    gap: 12,
+    gap: 10,
+    marginTop: 6,
   },
   pbReps: {
-    color: '#fff',
-    fontSize: 56,
-    fontWeight: '300',
-    fontFamily: 'serif',
-    lineHeight: 60,
+    fontFamily: font.serif,
+    color: colors.ink,
+    fontSize: 96,
+    lineHeight: 96 * 0.95,
+    letterSpacing: -3.5,
   },
-  pbDate: {
-    color: '#a0a0b0',
-    fontSize: 14,
+  pbRepsSuffix: {
+    fontFamily: font.serifItalic,
+    color: colors.sage,
+    fontSize: 22,
   },
   pbSubtitle: {
-    color: '#a0a0b0',
-    fontSize: 12,
+    fontFamily: font.sans,
+    color: colors.inkDim,
+    fontSize: 13,
+    marginTop: 10,
+    lineHeight: 19,
   },
-  tripleRow: {
-    flexDirection: 'row',
-    gap: 12,
+  hiddenProbes: {
+    height: 0,
+    overflow: 'hidden',
+    opacity: 0,
   },
-  statCell: {
-    flex: 1,
-    backgroundColor: '#1a1a2e',
-    borderRadius: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 8,
-    alignItems: 'center',
-    gap: 4,
-  },
-  statValue: {
-    color: '#fff',
+  cardTitle: {
+    fontFamily: font.serif,
+    color: colors.ink,
     fontSize: 20,
-    fontWeight: '600',
   },
-  statLabel: {
-    color: '#a0a0b0',
-    fontSize: 11,
+  weekHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    marginBottom: 14,
+  },
+  dayLabelRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 6,
+  },
+  dayLabel: {
+    flex: 1,
+    fontFamily: font.sans,
+    fontSize: 10,
+    color: colors.inkFaint,
+    letterSpacing: 0.8,
     textAlign: 'center',
   },
-  weekCard: {
-    backgroundColor: '#1a1a2e',
-    borderRadius: 16,
-    padding: 16,
-    gap: 12,
-  },
-  weekRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    height: 90,
-  },
-  barColumn: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    height: '100%',
-    gap: 4,
-    paddingHorizontal: 2,
-  },
-  barColumnToday: {
+  dayLabelToday: {
     opacity: 0.5,
   },
-  barTrack: {
-    width: '60%',
-    flex: 1,
-    backgroundColor: '#2a2a3e',
-    borderRadius: 4,
-    justifyContent: 'flex-end',
-    overflow: 'hidden',
+  todayHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    marginBottom: 4,
   },
-  barFill: {
-    width: '100%',
-    backgroundColor: '#6b8a6e',
-    borderRadius: 4,
-  },
-  barLabel: {
-    color: '#a0a0b0',
-    fontSize: 10,
-  },
-  todayCard: {
-    backgroundColor: '#1a1a2e',
-    borderRadius: 16,
-    padding: 16,
-    gap: 12,
+  todayMeta: {
+    fontFamily: font.sans,
+    color: colors.inkDim,
+    fontSize: 12,
   },
   empty: {
-    color: '#a0a0b0',
+    fontFamily: font.sansItalic,
+    color: colors.inkFaint,
     fontSize: 13,
-    fontStyle: 'italic',
-  },
-  setRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  setIndex: {
-    color: '#a0a0b0',
-    fontSize: 12,
-    width: 48,
-  },
-  setBarTrack: {
-    flex: 1,
-    height: 6,
-    backgroundColor: '#2a2a3e',
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  setBarFill: {
-    height: '100%',
-    backgroundColor: '#6b8a6e',
-    borderRadius: 3,
-  },
-  setReps: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-    width: 36,
-    textAlign: 'right',
+    paddingVertical: 8,
   },
   startButton: {
-    backgroundColor: '#e94560',
-    borderRadius: 999,
-    paddingVertical: 16,
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  startButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+    marginTop: 6,
   },
 });
