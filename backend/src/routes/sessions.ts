@@ -40,7 +40,7 @@ export function sessionRoutes(db: Database.Database, ollama: IOllamaClient) {
     // Gather 7-day context for the same device. Exclude the just-completed
     // session from the "recent" list so the model contrasts today against
     // history rather than echoing today's numbers back.
-    const recent = getRecentSessionsForDevice(db, deviceId, 7).filter(
+    const recent = getRecentSessionsForDevice(db, deviceId, { days: 7 }).filter(
       (s) => s.id !== sessionId,
     );
 

@@ -89,6 +89,9 @@ function makeFakeApi(opts: {
     async getStatsBundle() {
       throw new Error('not used');
     },
+    async getHistoryMonth() {
+      throw new Error('not used');
+    },
     async isReachable(): Promise<boolean> {
       return opts.reachable ?? true;
     },

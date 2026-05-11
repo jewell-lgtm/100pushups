@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   RefreshControl,
   ScrollView,
@@ -7,13 +7,15 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { getDatabase } from '../src/db/getDatabase';
-import {
-  createRepository,
-  type IRepository,
-  type MonthSessionDay,
-  type RecentSessionRow,
-} from '../src/db/repository';
+import { useFocusEffect } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
+import { useStatsBundle } from '../src/data/hooks/useStatsBundle';
+import { useMonthHistory } from '../src/data/hooks/useMonthHistory';
+import { queryKeys } from '../src/data/queryKeys';
+import type {
+  HistoryMonthDay,
+  HistoryMonthRecent,
+} from '../src/api/client';
 import { useSync } from '../src/hooks/useSync';
 
 // Plain-primitive functional cut (Phase 11.5). The sage/sageSoft theme
@@ -64,49 +66,48 @@ function monthLabel(state: MonthState): string {
 
 export default function HistoryScreen() {
   const [month, setMonth] = useState<MonthState>(todayYearMonth());
-  const [days, setDays] = useState<MonthSessionDay[]>([]);
-  const [streak, setStreak] = useState(0);
-  const [longest, setLongest] = useState(0);
-  const [recent, setRecent] = useState<RecentSessionRow[]>([]);
-  const [repo, setRepo] = useState<IRepository | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const { triggerSync } = useSync();
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    (async () => {
-      const db = await getDatabase();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      setRepo(createRepository(db as any));
-    })();
-  }, []);
+  // Phase 14.5: the four sequential `repo.*` reads that used to live
+  // here have been collapsed into two TanStack-cached round-trips —
+  // the streak pair from the stats bundle, the month grid + recent
+  // from the history endpoint. Local SQLite reads stay on the workout
+  // write path (until 14.7 decommissions them) but no longer back the
+  // History screen.
+  const { data: stats } = useStatsBundle();
+  const { data: history } = useMonthHistory(month.year, month.month, EXERCISE_ID);
 
-  const reload = useCallback(async () => {
-    if (!repo) return;
-    const [m, s, l, r] = await Promise.all([
-      repo.getMonthSessions(month.year, month.month, EXERCISE_ID),
-      repo.getStreak(EXERCISE_ID),
-      repo.getLongestStreak(EXERCISE_ID),
-      repo.getRecentSessions(3, EXERCISE_ID),
-    ]);
-    setDays(m);
-    setStreak(s);
-    setLongest(l);
-    setRecent(r);
-  }, [repo, month]);
+  const days: HistoryMonthDay[] = history?.days ?? [];
+  const recent: HistoryMonthRecent[] = history?.recent ?? [];
+  const streak = stats?.streak ?? 0;
+  const longest = stats?.longestStreak ?? 0;
 
-  useEffect(() => {
-    void reload();
-  }, [reload]);
+  // Re-pull both bundles when the user returns from a workout —
+  // totals/sets for today (stats) and the day's grid entry / recent
+  // row only become accurate once the Complete screen has saved.
+  useFocusEffect(
+    useCallback(() => {
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.history(month.year, month.month),
+      });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.stats.bundle });
+    }, [queryClient, month.year, month.month]),
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
       await triggerSync();
-      await reload();
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.history(month.year, month.month),
+      });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.stats.bundle });
     } finally {
       setRefreshing(false);
     }
-  }, [triggerSync, reload]);
+  }, [triggerSync, queryClient, month.year, month.month]);
 
   const canGoNext = !isCurrentMonth(month);
 
@@ -179,7 +180,7 @@ function CalendarGrid({
   days,
 }: {
   state: MonthState;
-  days: MonthSessionDay[];
+  days: HistoryMonthDay[];
 }) {
   const firstOfMonth = Temporal.PlainDate.from({ year: state.year, month: state.month, day: 1 });
   // dayOfWeek: Mon=1 .. Sun=7. We render Mon-first, so leading blank
@@ -190,7 +191,7 @@ function CalendarGrid({
   const todayDay =
     today.year === state.year && today.month === state.month ? today.day : null;
 
-  const byDay = new Map<number, MonthSessionDay>();
+  const byDay = new Map<number, HistoryMonthDay>();
   for (const d of days) byDay.set(d.day, d);
 
   // Pad trailing blanks so the grid renders as full weeks. Total
@@ -247,7 +248,7 @@ function CalendarGrid({
   );
 }
 
-function RecentList({ sessions }: { sessions: RecentSessionRow[] }) {
+function RecentList({ sessions }: { sessions: HistoryMonthRecent[] }) {
   if (sessions.length === 0) {
     return (
       <View style={styles.recentSection}>

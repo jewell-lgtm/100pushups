@@ -1,15 +1,32 @@
 import { Hono } from 'hono';
 import type Database from 'better-sqlite3';
 import { getMonthSessionsForDevice } from '../stats.js';
+import { getRecentSessionsForDevice } from '../sessions.js';
 
-// Monthly calendar grid for the Stats/History screen. Returns one entry
-// per day that has at least one session in that month — the UI fills
-// empty grid cells itself. Phase 14.2 partial.
+// Monthly calendar grid + recent-sessions list for the Stats/History
+// screen. The History screen used to do four sequential local-repo
+// reads on focus; this bundle plus `/api/v1/stats` (streak +
+// longestStreak for the banner) collapse that into two cached
+// round-trips so the screen renders instantly from cache after the
+// first navigation.
 //
 // Query params:
 //   year:  4-digit int
 //   month: 1..12 (1-indexed; Jan=1, Dec=12)
 // Both required; 400 on missing/malformed.
+//
+// Response shape:
+//   {
+//     days:   [ { day, totalReps, target } ... ]   // grid (this month)
+//     recent: [ { id, startedAt, totalReps,         // Recent list — top 3
+//                  setCount, userFeedback } ... ]   //   most recent
+//                                                   //   across all months
+//   }
+//
+// `recent` is device-wide (not constrained to the query month) so the
+// "Recent" list keeps showing context after the user pages back to an
+// older month — matches the Phase 11.5 local-repo behaviour the
+// screen had before the migration.
 export function historyRoutes(db: Database.Database) {
   const app = new Hono();
 
@@ -36,7 +53,15 @@ export function historyRoutes(db: Database.Database) {
 
     const deviceId = c.get('deviceId' as never) as string;
     const days = getMonthSessionsForDevice(db, deviceId, year, month, exerciseId);
-    return c.json({ days });
+    const recentRows = getRecentSessionsForDevice(db, deviceId, { limit: 3 });
+    const recent = recentRows.map((r) => ({
+      id: r.id,
+      startedAt: r.startedAt,
+      totalReps: r.totalReps,
+      setCount: r.setCount,
+      userFeedback: r.userFeedback,
+    }));
+    return c.json({ days, recent });
   });
 
   return app;

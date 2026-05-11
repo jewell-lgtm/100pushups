@@ -258,9 +258,14 @@ describe('GET /api/v1/history', () => {
     expect(aRes.status).toBe(200);
     const aJson = (await aRes.json()) as {
       days: Array<{ day: number; totalReps: number; target: number | null }>;
+      recent: Array<{ id: string; totalReps: number | null }>;
     };
     expect(aJson.days.length).toBe(1);
     expect(aJson.days[0].totalReps).toBe(22);
+    // The session synced above also appears in `recent`.
+    expect(aJson.recent.length).toBe(1);
+    expect(aJson.recent[0].id).toBe('sess-a-month-1');
+    expect(aJson.recent[0].totalReps).toBe(22);
 
     const bRes = await authedGet(
       app,
@@ -268,8 +273,76 @@ describe('GET /api/v1/history', () => {
       b.token,
     );
     expect(bRes.status).toBe(200);
-    const bJson = (await bRes.json()) as { days: unknown[] };
+    const bJson = (await bRes.json()) as { days: unknown[]; recent: unknown[] };
     expect(bJson.days).toEqual([]);
+    expect(bJson.recent).toEqual([]);
+  });
+
+  it("recent is device-scoped — A's rows don't leak to B", async () => {
+    const { app } = buildApp();
+    const a = await register(app);
+    const b = await register(app);
+
+    await syncSessions(app, a.token, [
+      makeSession('sess-a-rec-1', isoDateDaysAgo(2), [{ reps: 10 }]),
+      makeSession('sess-a-rec-2', isoDateDaysAgo(1), [{ reps: 12 }]),
+      makeSession('sess-a-rec-3', isoDateDaysAgo(0), [{ reps: 14 }]),
+    ]);
+    // B syncs nothing.
+
+    const today = todayUtc();
+    const [yearStr, monthStr] = today.split('-');
+    const path = `/api/v1/history?year=${yearStr}&month=${parseInt(monthStr, 10)}`;
+
+    const aRes = await authedGet(app, path, a.token);
+    const aJson = (await aRes.json()) as {
+      recent: Array<{ id: string }>;
+    };
+    expect(aJson.recent.map((r) => r.id).sort()).toEqual(
+      ['sess-a-rec-1', 'sess-a-rec-2', 'sess-a-rec-3'].sort(),
+    );
+
+    const bRes = await authedGet(app, path, b.token);
+    const bJson = (await bRes.json()) as { recent: unknown[] };
+    expect(bJson.recent).toEqual([]);
+  });
+
+  it('recent is capped at 3 — even with 10 synced sessions only the 3 most recent come back, ordered DESC by startedAt', async () => {
+    const { app } = buildApp();
+    const a = await register(app);
+
+    // Sync 10 sessions spread across 10 distinct days. `daysAgo` of 9
+    // is the oldest; 0 is the most recent. The endpoint must return
+    // days 0, 1, 2 only — in DESC order.
+    const sessions: SyncSession[] = [];
+    for (let i = 9; i >= 0; i--) {
+      sessions.push(
+        makeSession(`sess-rec-${i}`, isoDateDaysAgo(i), [{ reps: 10 + i }]),
+      );
+    }
+    await syncSessions(app, a.token, sessions);
+
+    const today = todayUtc();
+    const [yearStr, monthStr] = today.split('-');
+    const path = `/api/v1/history?year=${yearStr}&month=${parseInt(monthStr, 10)}`;
+
+    const res = await authedGet(app, path, a.token);
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as {
+      recent: Array<{ id: string; startedAt: string }>;
+    };
+
+    expect(json.recent.length).toBe(3);
+    // Most recent first: days-ago 0, 1, 2 → ids sess-rec-0, sess-rec-1, sess-rec-2.
+    expect(json.recent.map((r) => r.id)).toEqual([
+      'sess-rec-0',
+      'sess-rec-1',
+      'sess-rec-2',
+    ]);
+    // Strictly DESC by startedAt.
+    for (let i = 0; i < json.recent.length - 1; i++) {
+      expect(json.recent[i].startedAt >= json.recent[i + 1].startedAt).toBe(true);
+    }
   });
 
   it('rejects malformed year/month with 400', async () => {

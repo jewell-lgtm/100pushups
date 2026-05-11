@@ -102,6 +102,36 @@ export interface StatsBundleResponse {
   todayTarget: number | null;
 }
 
+// Mirror of `backend/src/routes/history.ts` GET /. Bundles the
+// month-grid + recent-sessions list the History screen used to do as
+// two of its four sequential local-repo reads. Shapes match
+// `backend/src/stats.ts:getMonthSessionsForDevice` (days) and
+// `backend/src/sessions.ts:getRecentSessionsForDevice` (recent).
+export interface HistoryMonthRequest {
+  year: number;
+  month: number; // 1-indexed; 1..12
+  exerciseId: string;
+}
+
+export interface HistoryMonthDay {
+  day: number;
+  totalReps: number;
+  target: number | null;
+}
+
+export interface HistoryMonthRecent {
+  id: string;
+  startedAt: string;
+  totalReps: number | null;
+  setCount: number | null;
+  userFeedback: string | null;
+}
+
+export interface HistoryMonthResponse {
+  days: HistoryMonthDay[];
+  recent: HistoryMonthRecent[];
+}
+
 export interface IApiClient {
   voiceRespond(request: VoiceRequest): Promise<VoiceResponse>;
   voiceRespondStream(request: VoiceRequest): AsyncGenerator<StreamFrame, void, void>;
@@ -109,6 +139,7 @@ export interface IApiClient {
   generateWeeklyPlan(request: GeneratePlanRequest): Promise<GeneratePlanResponse>;
   reflectSession(request: ReflectSessionRequest): Promise<ReflectSessionResponse>;
   getStatsBundle(request: StatsBundleRequest): Promise<StatsBundleResponse>;
+  getHistoryMonth(request: HistoryMonthRequest): Promise<HistoryMonthResponse>;
   isReachable(): Promise<boolean>;
 }
 
@@ -167,6 +198,31 @@ export function createApiClient(baseUrl: string, options: ApiClientOptions = {})
   ): Promise<StatsBundleResponse> {
     const query = new URLSearchParams({ exerciseId: request.exerciseId }).toString();
     const response = await fetch(`${baseUrl}/api/v1/stats?${query}`, {
+      method: 'GET',
+      headers: { ...authHeaders },
+    });
+    if (response.status === 401 || response.status === 403) {
+      throw new AuthError(response.status);
+    }
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+    return response.json();
+  }
+
+  // GET-with-query — History month bundle. Pairs with
+  // `useStatsBundle()` to back the History screen: streak +
+  // longestStreak come from the stats bundle, days + recent come from
+  // here. URLSearchParams handles encoding for unusual exerciseIds.
+  async function getHistoryMonth(
+    request: HistoryMonthRequest,
+  ): Promise<HistoryMonthResponse> {
+    const query = new URLSearchParams({
+      year: String(request.year),
+      month: String(request.month),
+      exerciseId: request.exerciseId,
+    }).toString();
+    const response = await fetch(`${baseUrl}/api/v1/history?${query}`, {
       method: 'GET',
       headers: { ...authHeaders },
     });
@@ -240,6 +296,7 @@ export function createApiClient(baseUrl: string, options: ApiClientOptions = {})
     generateWeeklyPlan,
     reflectSession,
     getStatsBundle,
+    getHistoryMonth,
     async isReachable(): Promise<boolean> {
       try {
         const response = await fetch(`${baseUrl}/health`, {

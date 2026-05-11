@@ -3,6 +3,8 @@ import {
   createApiClient,
   GeneratePlanRequest,
   GeneratePlanResponse,
+  HistoryMonthRequest,
+  HistoryMonthResponse,
   IApiClient,
   ReflectSessionRequest,
   ReflectSessionResponse,
@@ -147,6 +149,17 @@ function wrapWithRetry(inner: IApiClient): IApiClient {
         if (err instanceof AuthError) {
           const refreshed = await reauthOnce();
           return await refreshed.getStatsBundle(req);
+        }
+        throw err;
+      }
+    },
+    async getHistoryMonth(req: HistoryMonthRequest): Promise<HistoryMonthResponse> {
+      try {
+        return await inner.getHistoryMonth(req);
+      } catch (err) {
+        if (err instanceof AuthError) {
+          const refreshed = await reauthOnce();
+          return await refreshed.getHistoryMonth(req);
         }
         throw err;
       }

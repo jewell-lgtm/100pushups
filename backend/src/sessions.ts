@@ -68,14 +68,43 @@ export function getSessionById(
   return row ? rowToSession(row) : null;
 }
 
-// Last N days of sessions for the given device. Default 7 (the reflection
-// context window). Ordered oldest-first so the LLM sees a chronological
-// progression.
+// Device-scoped recent sessions. Two complementary modes:
+//
+//   { days: N } — sessions whose started_at is within the last N days,
+//                 ordered ASC. The reflection prompt path uses this so
+//                 the LLM sees a chronological progression.
+//
+//   { limit: N } — the N most recent sessions, ordered DESC by
+//                  started_at. The Stats/History "Recent" rows path
+//                  uses this so the most recent workout appears first.
+//
+// Both modes share the same RBAC filter (`device_id = ?`); never expose
+// an unscoped variant.
+export interface RecentSessionsOptions {
+  days?: number;
+  limit?: number;
+}
+
 export function getRecentSessionsForDevice(
   db: Database.Database,
   deviceId: string,
-  days = 7,
+  options: RecentSessionsOptions = { days: 7 },
 ): SessionRow[] {
+  if (typeof options.limit === 'number') {
+    const rows = db
+      .prepare(
+        `SELECT id, exercise_id, weekly_plan_id, session_type, target_reps,
+                started_at, ended_at, total_reps, set_count, user_feedback,
+                device_id
+         FROM sessions
+         WHERE device_id = ?
+         ORDER BY started_at DESC
+         LIMIT ?`,
+      )
+      .all(deviceId, options.limit) as SessionDbRow[];
+    return rows.map(rowToSession);
+  }
+  const days = options.days ?? 7;
   const rows = db
     .prepare(
       `SELECT id, exercise_id, weekly_plan_id, session_type, target_reps,
