@@ -64,12 +64,51 @@ export interface ReflectSessionResponse {
   reflection: string | null;
 }
 
+// Mirror of `backend/src/routes/stats.ts` GET /. Bundles the four
+// sequential reads the Stats screen used to do into one device-scoped
+// payload. Shapes must match `backend/src/stats.ts:15-31` exactly so
+// the client can render `null` placeholders for empty fields.
+export interface StatsBundleRequest {
+  exerciseId: string;
+}
+
+export interface StatsBundlePersonalBest {
+  reps: number;
+  date: string;
+}
+
+export interface StatsBundleWeekDay {
+  /** ISO date `YYYY-MM-DD` for this Mon-Sun slot. */
+  date: string;
+  totalReps: number;
+  target: number | null;
+}
+
+export interface StatsBundleTodaySet {
+  id: string;
+  setNumber: number;
+  reps: number;
+  recordedAt: string;
+}
+
+export interface StatsBundleResponse {
+  personalBest: StatsBundlePersonalBest | null;
+  secondBestSet: StatsBundlePersonalBest | null;
+  streak: number;
+  longestStreak: number;
+  weekTotals: StatsBundleWeekDay[];
+  todaySets: StatsBundleTodaySet[];
+  yesterdayTotal: number | null;
+  todayTarget: number | null;
+}
+
 export interface IApiClient {
   voiceRespond(request: VoiceRequest): Promise<VoiceResponse>;
   voiceRespondStream(request: VoiceRequest): AsyncGenerator<StreamFrame, void, void>;
   syncWorkouts(request: SyncRequest): Promise<SyncResponse>;
   generateWeeklyPlan(request: GeneratePlanRequest): Promise<GeneratePlanResponse>;
   reflectSession(request: ReflectSessionRequest): Promise<ReflectSessionResponse>;
+  getStatsBundle(request: StatsBundleRequest): Promise<StatsBundleResponse>;
   isReachable(): Promise<boolean>;
 }
 
@@ -118,6 +157,26 @@ export function createApiClient(baseUrl: string, options: ApiClientOptions = {})
 
   async function reflectSession(request: ReflectSessionRequest): Promise<ReflectSessionResponse> {
     return fetchJson<ReflectSessionResponse>('/api/v1/session/reflect', request);
+  }
+
+  // GET-with-query — Stats bundle. Mirrors the four sequential reads
+  // `app/index.tsx` used to do (PB / second-best / week totals / today
+  // sets + voice context fields) in a single device-scoped round-trip.
+  async function getStatsBundle(
+    request: StatsBundleRequest,
+  ): Promise<StatsBundleResponse> {
+    const query = new URLSearchParams({ exerciseId: request.exerciseId }).toString();
+    const response = await fetch(`${baseUrl}/api/v1/stats?${query}`, {
+      method: 'GET',
+      headers: { ...authHeaders },
+    });
+    if (response.status === 401 || response.status === 403) {
+      throw new AuthError(response.status);
+    }
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+    return response.json();
   }
 
   async function* voiceRespondStream(
@@ -180,6 +239,7 @@ export function createApiClient(baseUrl: string, options: ApiClientOptions = {})
     syncWorkouts,
     generateWeeklyPlan,
     reflectSession,
+    getStatsBundle,
     async isReachable(): Promise<boolean> {
       try {
         const response = await fetch(`${baseUrl}/health`, {

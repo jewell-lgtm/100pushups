@@ -22,6 +22,11 @@ export const queryKeys = {
     pb: ['stats', 'pb'] as const,
     week: ['stats', 'week'] as const,
     today: ['stats', 'today'] as const,
+    // `bundle` backs the single-payload `/api/v1/stats` endpoint
+    // consumed by `useStatsBundle`. Kept separate from `pb` / `week` /
+    // `today` so a future call site can subscribe to a slice without
+    // refetching the bundle — invalidating `bundle` covers all four.
+    bundle: ['stats', 'bundle'] as const,
   },
   history: (year: number, month: number) => ['history', year, month] as const,
   settings: ['settings'] as const,

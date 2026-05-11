@@ -6,6 +6,8 @@ import {
   IApiClient,
   ReflectSessionRequest,
   ReflectSessionResponse,
+  StatsBundleRequest,
+  StatsBundleResponse,
   StreamFrame,
   SyncRequest,
   SyncResponse,
@@ -134,6 +136,17 @@ function wrapWithRetry(inner: IApiClient): IApiClient {
         if (err instanceof AuthError) {
           const refreshed = await reauthOnce();
           return await refreshed.reflectSession(req);
+        }
+        throw err;
+      }
+    },
+    async getStatsBundle(req: StatsBundleRequest): Promise<StatsBundleResponse> {
+      try {
+        return await inner.getStatsBundle(req);
+      } catch (err) {
+        if (err instanceof AuthError) {
+          const refreshed = await reauthOnce();
+          return await refreshed.getStatsBundle(req);
         }
         throw err;
       }

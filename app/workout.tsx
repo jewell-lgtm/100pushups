@@ -65,6 +65,7 @@ export default function WorkoutScreen() {
     syncWorkouts: async () => { throw new Error('api not ready'); },
     generateWeeklyPlan: async () => { throw new Error('api not ready'); },
     reflectSession: async () => { throw new Error('api not ready'); },
+    getStatsBundle: async () => { throw new Error('api not ready'); },
     isReachable: async () => false,
   };
 

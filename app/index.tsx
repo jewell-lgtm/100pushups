@@ -18,7 +18,7 @@
 //   muted bar   #2a2a3e   (matches the bar track on `app/complete.tsx`)
 //   sageBar     #6b8a6e   (matches the bar fill on `app/complete.tsx`)
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   RefreshControl,
   ScrollView,
@@ -28,28 +28,17 @@ import {
   View,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { getDatabase } from '../src/db/getDatabase';
+import { useQueryClient } from '@tanstack/react-query';
+import { useStatsBundle } from '../src/data/hooks/useStatsBundle';
+import { queryKeys } from '../src/data/queryKeys';
 import {
-  createRepository,
-  type IRepository,
-  type TodaySetRow,
-  type WeekDayTotal,
-} from '../src/db/repository';
+  type StatsBundleTodaySet,
+  type StatsBundleWeekDay,
+} from '../src/api/client';
 import { useSync } from '../src/hooks/useSync';
 
-const EXERCISE_ID = 'pushups';
 const DAY_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 const EM_DASH = '—';
-
-interface StatsData {
-  personalBest: { reps: number; date: string } | null;
-  secondBest: { reps: number; date: string } | null;
-  yesterdayTotal: number | null;
-  todayTarget: number | null;
-  streak: number;
-  week: WeekDayTotal[];
-  todaySets: TodaySetRow[];
-}
 
 function formatDate(iso: string): string {
   // Accept either an ISO date (YYYY-MM-DD) or full timestamp; both feed
@@ -63,62 +52,34 @@ function formatDate(iso: string): string {
 
 export default function StatsScreen() {
   const router = useRouter();
-  const [repo, setRepo] = useState<IRepository | null>(null);
-  const [data, setData] = useState<StatsData | null>(null);
+  const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
   const { triggerSync } = useSync();
 
-  // Same singleton-resolve-post-mount pattern as `app/complete.tsx` /
-  // `app/history.tsx`. The repo settles once and is held in state.
-  useEffect(() => {
-    (async () => {
-      const db = await getDatabase();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      setRepo(createRepository(db as any));
-    })();
-  }, []);
-
-  const reload = useCallback(async () => {
-    if (!repo) return;
-    const [ctx, pb, second, week, todaySets] = await Promise.all([
-      repo.buildVoiceContext(EXERCISE_ID),
-      repo.getPersonalBest(EXERCISE_ID),
-      repo.getSecondBestSet(EXERCISE_ID),
-      repo.getCurrentWeekTotals(EXERCISE_ID),
-      repo.getTodaySets(EXERCISE_ID),
-    ]);
-    setData({
-      personalBest: pb,
-      secondBest: second,
-      yesterdayTotal: ctx.yesterdayTotal,
-      todayTarget: ctx.todayTarget,
-      streak: ctx.streak,
-      week,
-      todaySets,
-    });
-  }, [repo]);
-
-  useEffect(() => {
-    void reload();
-  }, [reload]);
+  // Phase 14.5: the four sequential `repo.*` reads that used to live
+  // here have been collapsed into one TanStack-cached round-trip
+  // against `/api/v1/stats`. Local SQLite reads stay on the workout
+  // write path (until 14.7 decommissions them) but no longer back the
+  // Stats screen.
+  const { data } = useStatsBundle();
 
   // Re-pull when the user returns from a workout — totals/sets for
   // today only become accurate once the Complete screen has saved.
   useFocusEffect(
     useCallback(() => {
-      void reload();
-    }, [reload]),
+      void queryClient.invalidateQueries({ queryKey: queryKeys.stats.bundle });
+    }, [queryClient]),
   );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
       await triggerSync();
-      await reload();
+      await queryClient.invalidateQueries({ queryKey: queryKeys.stats.bundle });
     } finally {
       setRefreshing(false);
     }
-  }, [triggerSync, reload]);
+  }, [triggerSync, queryClient]);
 
   return (
     <ScrollView
@@ -133,7 +94,7 @@ export default function StatsScreen() {
         onHistory={() => router.push('/history')}
       />
 
-      <PersonalBestCard pb={data?.personalBest ?? null} second={data?.secondBest ?? null} />
+      <PersonalBestCard pb={data?.personalBest ?? null} second={data?.secondBestSet ?? null} />
 
       <StatTriple
         yesterday={data?.yesterdayTotal ?? null}
@@ -141,7 +102,7 @@ export default function StatsScreen() {
         streak={data?.streak ?? 0}
       />
 
-      <WeekBars week={data?.week ?? []} />
+      <WeekBars week={data?.weekTotals ?? []} />
 
       <TodaySetsCard sets={data?.todaySets ?? []} />
 
@@ -247,7 +208,7 @@ function StatCell({
   );
 }
 
-function WeekBars({ week }: { week: WeekDayTotal[] }) {
+function WeekBars({ week }: { week: StatsBundleWeekDay[] }) {
   // Bars scale to the per-day plan target when set; fall back to the
   // week's max reps so a target-less week still produces a sensible
   // chart. Today's bar renders at 0.5 opacity per design.
@@ -315,7 +276,7 @@ function WeekBar({
   );
 }
 
-function TodaySetsCard({ sets }: { sets: TodaySetRow[] }) {
+function TodaySetsCard({ sets }: { sets: StatsBundleTodaySet[] }) {
   // Cap at 5 rows per design; if a user did more, the slice truncates
   // and the rest live in Complete/History.
   const visible = sets.slice(0, 5);

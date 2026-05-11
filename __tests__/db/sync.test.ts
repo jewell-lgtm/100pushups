@@ -86,6 +86,9 @@ function makeFakeApi(opts: {
     async reflectSession() {
       throw new Error('not used');
     },
+    async getStatsBundle() {
+      throw new Error('not used');
+    },
     async isReachable(): Promise<boolean> {
       return opts.reachable ?? true;
     },
