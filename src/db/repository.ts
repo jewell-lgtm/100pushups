@@ -38,14 +38,31 @@ export interface RecentSessionRow {
   userFeedback: string | null;
 }
 
+export interface WeekDayTotal {
+  /** ISO date `YYYY-MM-DD` for this Mon-Sun slot. */
+  date: string;
+  totalReps: number;
+  target: number | null;
+}
+
+export interface TodaySetRow {
+  id: string;
+  setNumber: number;
+  reps: number;
+  recordedAt: string;
+}
+
 export interface IRepository {
   getYesterdaySession(exerciseId: string): Promise<{ totalReps: number; setCount: number } | null>;
   getPersonalBest(exerciseId: string): Promise<{ reps: number; date: string } | null>;
+  getSecondBestSet(exerciseId: string): Promise<{ reps: number; date: string } | null>;
   getStreak(exerciseId: string): Promise<number>;
   getLongestStreak(exerciseId: string): Promise<number>;
   getTodayTarget(exerciseId: string): Promise<number | null>;
   getCurrentWeeklyPlan(exerciseId: string): Promise<WeeklyPlan | null>;
   getMonthSessions(year: number, month: number, exerciseId: string): Promise<MonthSessionDay[]>;
+  getCurrentWeekTotals(exerciseId: string): Promise<WeekDayTotal[]>;
+  getTodaySets(exerciseId: string): Promise<TodaySetRow[]>;
   getRecentSessions(limit: number, exerciseId: string): Promise<RecentSessionRow[]>;
   getSessionById(sessionId: string): Promise<Session | null>;
   getSetsForSession(sessionId: string): Promise<WorkoutSet[]>;
@@ -74,6 +91,23 @@ export function createRepository(db: SQLiteDatabase): IRepository {
          JOIN sessions sess ON s.session_id = sess.id
          WHERE sess.exercise_id = ?
          ORDER BY s.reps DESC LIMIT 1`,
+        [exerciseId],
+      );
+      return row ? { reps: row.reps, date: row.recorded_at } : null;
+    },
+
+    // Second-highest single-set reps for the exercise. Used by the Stats
+    // screen's "Previous" subtitle row under the personal best. Tie-break
+    // on started_at ASC so the earliest set wins (the historic claim is
+    // what gets dethroned by a later tie). LIMIT 2 OFFSET 1 pulls the
+    // runner-up directly; we return null when fewer than 2 sets exist.
+    async getSecondBestSet(exerciseId) {
+      const row = await db.getFirstAsync<{ reps: number; recorded_at: string }>(
+        `SELECT s.reps, s.recorded_at FROM sets s
+         JOIN sessions sess ON s.session_id = sess.id
+         WHERE sess.exercise_id = ?
+         ORDER BY s.reps DESC, sess.started_at ASC
+         LIMIT 2 OFFSET 1`,
         [exerciseId],
       );
       return row ? { reps: row.reps, date: row.recorded_at } : null;
@@ -217,6 +251,90 @@ export function createRepository(db: SQLiteDatabase): IRepository {
           target,
         };
       });
+    },
+
+    // Mon-Sun totals for the current ISO week, length 7. Empty days
+    // surface as `{ totalReps: 0, target: <plan|null> }` so the Stats
+    // screen's week bars can render a placeholder track. Mirrors the
+    // weekly_plan join pattern from `getMonthSessions` but over a
+    // 7-day window instead of a full month.
+    async getCurrentWeekTotals(exerciseId) {
+      const today = Temporal.Now.plainDateISO();
+      // ISO week: Mon=1..Sun=7.
+      const monday = today.subtract({ days: today.dayOfWeek - 1 });
+      const sunday = monday.add({ days: 6 });
+      const start = monday.toString();
+      // Half-open upper bound: first day after Sunday.
+      const endExclusive = sunday.add({ days: 1 }).toString();
+
+      const rows = await db.getAllAsync<{ d: string; total_reps: number }>(
+        `SELECT date(started_at) as d, COALESCE(SUM(total_reps), 0) as total_reps
+         FROM sessions
+         WHERE exercise_id = ? AND started_at >= ? AND started_at < ?
+         GROUP BY date(started_at)
+         ORDER BY d ASC`,
+        [exerciseId, start, endExclusive],
+      );
+      const byDate = new Map<string, number>();
+      for (const r of rows) byDate.set(r.d, r.total_reps ?? 0);
+
+      // Same plan-target join pattern as getMonthSessions: pull all
+      // plans whose week_start precedes the upper bound, then pick the
+      // most recent plan covering each day.
+      const plans = await db.getAllAsync<{ week_start: string; daily_targets: string }>(
+        `SELECT week_start, daily_targets FROM weekly_plans
+         WHERE exercise_id = ? AND week_start < ?
+         ORDER BY week_start DESC`,
+        [exerciseId, endExclusive],
+      );
+      const parsedPlans = plans.map((p) => ({
+        weekStart: p.week_start,
+        targets: parseDailyTargets(p.daily_targets),
+      }));
+
+      const dayKeys = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+      const out: WeekDayTotal[] = [];
+      for (let i = 0; i < 7; i++) {
+        const d = monday.add({ days: i });
+        const dateStr = d.toString();
+        const dayKey = dayKeys[d.dayOfWeek - 1];
+        const plan = parsedPlans.find((p) => p.weekStart <= dateStr);
+        const target = plan ? (plan.targets[dayKey] ?? null) : null;
+        out.push({
+          date: dateStr,
+          totalReps: byDate.get(dateStr) ?? 0,
+          target,
+        });
+      }
+      return out;
+    },
+
+    // Sets from today's most-recent session, ordered by set_number ASC.
+    // The Stats screen renders these in the per-set progress card. We
+    // resolve "today" via `date('now')` for consistency with the rest
+    // of the SQLite-side date math (`getYesterdaySession` etc).
+    async getTodaySets(exerciseId) {
+      const session = await db.getFirstAsync<{ id: string }>(
+        `SELECT id FROM sessions
+         WHERE exercise_id = ? AND date(started_at) = date('now')
+         ORDER BY started_at DESC LIMIT 1`,
+        [exerciseId],
+      );
+      if (!session) return [];
+
+      const rows = await db.getAllAsync<{
+        id: string; set_number: number; reps: number; recorded_at: string;
+      }>(
+        `SELECT id, set_number, reps, recorded_at
+         FROM sets WHERE session_id = ? ORDER BY set_number ASC`,
+        [session.id],
+      );
+      return rows.map((r) => ({
+        id: r.id,
+        setNumber: r.set_number,
+        reps: r.reps,
+        recordedAt: r.recorded_at,
+      }));
     },
 
     async getRecentSessions(limit, exerciseId) {

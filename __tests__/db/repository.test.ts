@@ -8,6 +8,9 @@
 // (calendar grid) needed `getMonthSessions`, `getLongestStreak`, and
 // `getRecentSessions` — same shape as production SQLite, just enough
 // query routing to keep the repository implementation honest.
+//
+// Phase 11.3 (Stats screen) adds an in-memory `sets` table and routes
+// for `getSecondBestSet`, `getCurrentWeekTotals`, and `getTodaySets`.
 
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { createRepository, parseDailyTargets } from '../../src/db/repository';
@@ -31,15 +34,30 @@ interface SessionRow {
   user_feedback: string | null;
 }
 
+interface SetRow {
+  id: string;
+  session_id: string;
+  set_number: number;
+  reps: number;
+  recorded_at: string;
+}
+
 // `started_at` is an ISO timestamp; `date(...)` in production SQLite
 // returns the UTC YYYY-MM-DD prefix.
 function utcDate(iso: string): string {
   return iso.slice(0, 10);
 }
 
+// Today's UTC date as `YYYY-MM-DD`. Used by the fake's `date('now')`
+// emulation so Phase 11.3 tests can stage "today's session" rows.
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function makeFakeDb(
   rows: WeeklyPlanRow[] = [],
   sessions: SessionRow[] = [],
+  sets: SetRow[] = [],
 ): SQLiteDatabase {
   return {
     async runAsync(query: string, params?: unknown[]): Promise<{ changes: number; lastInsertRowId: number }> {
@@ -84,6 +102,45 @@ function makeFakeDb(
         const r = candidates[0];
         return r ? ({ daily_targets: r.daily_targets } as T) : null;
       }
+      // getPersonalBest / getSecondBestSet share the same SELECT/JOIN
+      // shape against the sets+sessions join. Disambiguate via the
+      // OFFSET clause (only the second-best query uses it).
+      if (/SELECT s\.reps, s\.recorded_at FROM sets s/i.test(query)
+          && /JOIN sessions sess/i.test(query)
+          && params) {
+        const [exerciseId] = params as [string];
+        const joined = sets
+          .map((set) => {
+            const sess = sessions.find((s) => s.id === set.session_id);
+            return sess && sess.exercise_id === exerciseId
+              ? { reps: set.reps, recorded_at: set.recorded_at, started_at: sess.started_at }
+              : null;
+          })
+          .filter((r): r is { reps: number; recorded_at: string; started_at: string } => r !== null)
+          // ORDER BY s.reps DESC, sess.started_at ASC.
+          .sort((a, b) => {
+            if (b.reps !== a.reps) return b.reps - a.reps;
+            return a.started_at.localeCompare(b.started_at);
+          });
+        if (/OFFSET 1/i.test(query)) {
+          const r = joined[1];
+          return r ? ({ reps: r.reps, recorded_at: r.recorded_at } as T) : null;
+        }
+        const r = joined[0];
+        return r ? ({ reps: r.reps, recorded_at: r.recorded_at } as T) : null;
+      }
+      // getTodaySets: latest session whose date(started_at) = today.
+      if (/SELECT id FROM sessions/i.test(query)
+          && /date\(started_at\) = date\('now'\)/i.test(query)
+          && params) {
+        const [exerciseId] = params as [string];
+        const today = todayIso();
+        const candidates = sessions
+          .filter((s) => s.exercise_id === exerciseId && utcDate(s.started_at) === today)
+          .sort((a, b) => b.started_at.localeCompare(a.started_at));
+        const r = candidates[0];
+        return r ? ({ id: r.id } as T) : null;
+      }
       return null;
     },
     async getAllAsync<T>(query: string, params?: unknown[]): Promise<T[]> {
@@ -127,6 +184,22 @@ function makeFakeDb(
         const out = Array.from(days).sort().map((d) => ({ d }));
         return out as unknown as T[];
       }
+      // getTodaySets: pull sets for the session id resolved by the
+      // sibling getFirstAsync route above. Ordered by set_number ASC.
+      if (/SELECT id, set_number, reps, recorded_at\s+FROM sets WHERE session_id = \?/i.test(query)
+          && params) {
+        const [sessionId] = params as [string];
+        const out = sets
+          .filter((s) => s.session_id === sessionId)
+          .sort((a, b) => a.set_number - b.set_number)
+          .map((s) => ({
+            id: s.id,
+            set_number: s.set_number,
+            reps: s.reps,
+            recorded_at: s.recorded_at,
+          }));
+        return out as unknown as T[];
+      }
       // getRecentSessions.
       if (/SELECT id, started_at, total_reps, set_count, user_feedback\s+FROM sessions/i.test(query)
           && params) {
@@ -156,6 +229,15 @@ function makeSession(overrides: Partial<SessionRow> & { id: string; started_at: 
     total_reps: 30,
     set_count: 3,
     user_feedback: null,
+    ...overrides,
+  };
+}
+
+function makeSet(
+  overrides: Partial<SetRow> & { id: string; session_id: string; set_number: number; reps: number },
+): SetRow {
+  return {
+    recorded_at: '2026-05-10T08:00:00Z',
     ...overrides,
   };
 }
@@ -403,5 +485,154 @@ describe('repository.getRecentSessions', () => {
   it('returns empty when no sessions exist', async () => {
     const repo = createRepository(makeFakeDb([], []));
     expect(await repo.getRecentSessions(3, 'pushups')).toEqual([]);
+  });
+});
+
+// Phase 11.3: Stats screen reads.
+describe('repository.getSecondBestSet', () => {
+  it('returns null on an empty DB', async () => {
+    const repo = createRepository(makeFakeDb([], [], []));
+    expect(await repo.getSecondBestSet('pushups')).toBeNull();
+  });
+
+  it('returns null when only one set exists', async () => {
+    const sessions: SessionRow[] = [
+      makeSession({ id: 's1', started_at: '2026-05-10T08:00:00Z' }),
+    ];
+    const sets: SetRow[] = [
+      makeSet({ id: 'set-1', session_id: 's1', set_number: 1, reps: 25 }),
+    ];
+    const repo = createRepository(makeFakeDb([], sessions, sets));
+    expect(await repo.getSecondBestSet('pushups')).toBeNull();
+  });
+
+  it('returns the runner-up set across sessions', async () => {
+    const sessions: SessionRow[] = [
+      makeSession({ id: 's1', started_at: '2026-05-10T08:00:00Z' }),
+      makeSession({ id: 's2', started_at: '2026-05-11T08:00:00Z' }),
+    ];
+    const sets: SetRow[] = [
+      makeSet({ id: 'a', session_id: 's1', set_number: 1, reps: 20, recorded_at: '2026-05-10T08:05:00Z' }),
+      makeSet({ id: 'b', session_id: 's1', set_number: 2, reps: 30, recorded_at: '2026-05-10T08:10:00Z' }),
+      makeSet({ id: 'c', session_id: 's2', set_number: 1, reps: 25, recorded_at: '2026-05-11T08:05:00Z' }),
+    ];
+    const repo = createRepository(makeFakeDb([], sessions, sets));
+    expect(await repo.getSecondBestSet('pushups')).toEqual({
+      reps: 25,
+      date: '2026-05-11T08:05:00Z',
+    });
+  });
+
+  it('breaks ties on started_at ASC — the earlier session wins the runner-up', async () => {
+    // Two sets are tied at the top with reps=30, and another two tied at
+    // 25. ORDER BY reps DESC, started_at ASC picks the earliest 30-rep
+    // set as #1 and the later 30-rep set as #2 (the actual runner-up).
+    const sessions: SessionRow[] = [
+      makeSession({ id: 's-early', started_at: '2026-05-10T08:00:00Z' }),
+      makeSession({ id: 's-late', started_at: '2026-05-11T08:00:00Z' }),
+    ];
+    const sets: SetRow[] = [
+      makeSet({ id: 'early-30', session_id: 's-early', set_number: 1, reps: 30, recorded_at: '2026-05-10T08:05:00Z' }),
+      makeSet({ id: 'late-30', session_id: 's-late', set_number: 1, reps: 30, recorded_at: '2026-05-11T08:05:00Z' }),
+      makeSet({ id: 'early-25', session_id: 's-early', set_number: 2, reps: 25, recorded_at: '2026-05-10T08:10:00Z' }),
+    ];
+    const repo = createRepository(makeFakeDb([], sessions, sets));
+    expect(await repo.getSecondBestSet('pushups')).toEqual({
+      reps: 30,
+      date: '2026-05-11T08:05:00Z',
+    });
+  });
+});
+
+// `getCurrentWeekTotals` keys off `Temporal.Now.plainDateISO()`, so we
+// stage sessions relative to today's ISO week. Helpers compute the
+// expected Mon-Sun window the same way the production query does.
+describe('repository.getCurrentWeekTotals', () => {
+  function currentWeek(): { monday: Temporal.PlainDate; days: Temporal.PlainDate[] } {
+    const today = Temporal.Now.plainDateISO();
+    const monday = today.subtract({ days: today.dayOfWeek - 1 });
+    const days = Array.from({ length: 7 }, (_, i) => monday.add({ days: i }));
+    return { monday, days };
+  }
+
+  it('returns 7 zero entries on an empty DB', async () => {
+    const repo = createRepository(makeFakeDb([], [], []));
+    const got = await repo.getCurrentWeekTotals('pushups');
+    const { days } = currentWeek();
+    expect(got).toHaveLength(7);
+    expect(got.map((d) => d.date)).toEqual(days.map((d) => d.toString()));
+    expect(got.every((d) => d.totalReps === 0)).toBe(true);
+    expect(got.every((d) => d.target === null)).toBe(true);
+  });
+
+  it('attaches plan targets and fills zero for missing days', async () => {
+    const { monday, days } = currentWeek();
+    // Plan starts on Monday of the current week so every day picks it up.
+    const plans: WeeklyPlanRow[] = [{
+      id: 'plan-1', exercise_id: 'pushups', week_start: monday.toString(),
+      evaluation_reps: null,
+      daily_targets: JSON.stringify({ mon: 20, tue: 22, wed: 24, thu: 22, fri: 26, sat: 0, sun: 30 }),
+      notes: null, created_at: `${monday.toString()}T00:00:00Z`,
+    }];
+    // Sessions on Mon and Wed only — Tue should surface as totalReps=0
+    // with its plan target intact.
+    const sessions: SessionRow[] = [
+      makeSession({ id: 's-mon', started_at: `${days[0].toString()}T08:00:00Z`, total_reps: 18 }),
+      makeSession({ id: 's-wed', started_at: `${days[2].toString()}T08:00:00Z`, total_reps: 24 }),
+    ];
+    const repo = createRepository(makeFakeDb(plans, sessions, []));
+    const got = await repo.getCurrentWeekTotals('pushups');
+
+    expect(got).toHaveLength(7);
+    expect(got[0]).toEqual({ date: days[0].toString(), totalReps: 18, target: 20 });
+    expect(got[1]).toEqual({ date: days[1].toString(), totalReps: 0, target: 22 });
+    expect(got[2]).toEqual({ date: days[2].toString(), totalReps: 24, target: 24 });
+    expect(got[3].target).toBe(22);
+    expect(got[6].target).toBe(30);
+  });
+});
+
+describe('repository.getTodaySets', () => {
+  it('returns an empty array when no session exists today', async () => {
+    const repo = createRepository(makeFakeDb([], [], []));
+    expect(await repo.getTodaySets('pushups')).toEqual([]);
+  });
+
+  it("returns today's sets ordered by setNumber asc", async () => {
+    const today = todayIso();
+    const sessions: SessionRow[] = [
+      makeSession({ id: 'today', started_at: `${today}T08:00:00Z` }),
+      // A session from a prior day must be ignored.
+      makeSession({ id: 'yesterday', started_at: '2025-12-31T08:00:00Z' }),
+    ];
+    // Insert out of order — repo must sort by set_number ASC.
+    const sets: SetRow[] = [
+      makeSet({ id: 's3', session_id: 'today', set_number: 3, reps: 10, recorded_at: `${today}T08:20:00Z` }),
+      makeSet({ id: 's1', session_id: 'today', set_number: 1, reps: 25, recorded_at: `${today}T08:00:00Z` }),
+      makeSet({ id: 's2', session_id: 'today', set_number: 2, reps: 15, recorded_at: `${today}T08:10:00Z` }),
+      // Set from the prior session must not leak in.
+      makeSet({ id: 'old', session_id: 'yesterday', set_number: 1, reps: 99, recorded_at: '2025-12-31T08:00:00Z' }),
+    ];
+    const repo = createRepository(makeFakeDb([], sessions, sets));
+    const got = await repo.getTodaySets('pushups');
+    expect(got.map((r) => r.setNumber)).toEqual([1, 2, 3]);
+    expect(got.map((r) => r.reps)).toEqual([25, 15, 10]);
+    expect(got.map((r) => r.id)).toEqual(['s1', 's2', 's3']);
+  });
+
+  it("returns sets from the most-recent session when multiple exist today", async () => {
+    const today = todayIso();
+    const sessions: SessionRow[] = [
+      makeSession({ id: 'early', started_at: `${today}T06:00:00Z` }),
+      makeSession({ id: 'late', started_at: `${today}T18:00:00Z` }),
+    ];
+    const sets: SetRow[] = [
+      makeSet({ id: 'e1', session_id: 'early', set_number: 1, reps: 10 }),
+      makeSet({ id: 'l1', session_id: 'late', set_number: 1, reps: 22 }),
+      makeSet({ id: 'l2', session_id: 'late', set_number: 2, reps: 18 }),
+    ];
+    const repo = createRepository(makeFakeDb([], sessions, sets));
+    const got = await repo.getTodaySets('pushups');
+    expect(got.map((r) => r.id)).toEqual(['l1', 'l2']);
   });
 });
