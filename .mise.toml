@@ -1,0 +1,10 @@
+[tools]
+java = "temurin-17"
+android-sdk = "20.0"
+
+[env]
+_.path = [
+  "{{env.HOME}}/.local/share/mise/installs/android-sdk/20.0/platform-tools",
+  "{{env.HOME}}/.local/share/mise/installs/android-sdk/20.0/emulator",
+  "{{env.HOME}}/.local/share/mise/installs/android-sdk/20.0/cmdline-tools/latest/bin",
+]
