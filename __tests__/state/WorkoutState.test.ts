@@ -65,6 +65,9 @@ describe('WorkoutState', () => {
         toolCall: { name: 'record_feedback', params: { feedback: 'felt great' } },
       }));
       expect(state.userFeedback).toBe('felt great');
+      // appState must reset to 'idle' so workout.tsx's (idle && userFeedback)
+      // effect fires the navigate-home transition.
+      expect(state.appState).toBe('idle');
       expect(effects).toContainEqual({ type: 'SAVE_SESSION' });
       expect(effects).toContainEqual({ type: 'NAVIGATE_HOME' });
     });
