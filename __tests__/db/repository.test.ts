@@ -52,7 +52,19 @@ function makeFakeDb(rows: WeeklyPlanRow[] = []): SQLiteDatabase {
           .sort((a, b) => b.week_start.localeCompare(a.week_start));
         return (candidates[0] ?? null) as T | null;
       }
+      if (/SELECT daily_targets FROM weekly_plans/i.test(query) && params) {
+        const exerciseId = params[0] as string;
+        const today = new Date().toISOString().slice(0, 10);
+        const candidates = rows
+          .filter((r) => r.exercise_id === exerciseId && r.week_start <= today)
+          .sort((a, b) => b.week_start.localeCompare(a.week_start));
+        const r = candidates[0];
+        return r ? ({ daily_targets: r.daily_targets } as T) : null;
+      }
       return null;
+    },
+    async getAllAsync<T>(): Promise<T[]> {
+      return [];
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
@@ -142,5 +154,23 @@ describe('repository read after upsert (smoke)', () => {
     const repo = createRepository(makeFakeDb([]));
     const got = await repo.getCurrentWeeklyPlan('pushups');
     expect(got).toBeNull();
+  });
+});
+
+// Phase 4.1: first-run flow. A clean install has no sessions, no sets, and
+// no weekly_plans. buildVoiceContext must degrade to all-nulls + streak=0
+// so the dashboard renders em-dashes and the workout greeting drops to
+// the bare "Say ready when you want to start." form.
+describe('repository.buildVoiceContext on an empty DB', () => {
+  it('returns all-nulls + streak=0 with no sessions or plans', async () => {
+    const repo = createRepository(makeFakeDb([]));
+    const ctx = await repo.buildVoiceContext('pushups');
+    expect(ctx).toEqual({
+      todayTarget: null,
+      yesterdayTotal: null,
+      personalBest: null,
+      streak: 0,
+      sessionType: 'regular',
+    });
   });
 });
