@@ -19,8 +19,11 @@ test.describe('AuthGate', () => {
     });
 
     await page.goto('/');
-    await expect(page.getByText('100 Pushups').first()).toBeVisible();
-    await expect(page.getByText('Start Workout')).toBeVisible();
+    // Stats screen is the post-auth landing page (Phase 11.3). We assert
+    // on its testID + Start CTA rather than the old "100 Pushups" / "Start
+    // Workout" labels.
+    await expect(page.getByTestId('stats-screen')).toBeVisible();
+    await expect(page.getByTestId('stats-start-cta')).toBeVisible();
 
     expect(registers).toEqual(['POST']);
 
@@ -45,7 +48,7 @@ test.describe('AuthGate', () => {
     });
 
     await page.reload();
-    await expect(page.getByText('100 Pushups').first()).toBeVisible();
+    await expect(page.getByTestId('stats-screen')).toBeVisible();
     expect(registers).toEqual([]);
   });
 });
