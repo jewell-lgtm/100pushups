@@ -20,6 +20,13 @@ interface CalendarGridProps {
   // Header strings, defaults to Sun-first (`S M T W T F S`) per the
   // reference. Pass a localised array for other week starts.
   weekdayLabels?: readonly string[];
+  // Optional testID for the outer wrapping View, so e2e suites can query
+  // the grid as a whole (`history-calendar-grid`).
+  testID?: string;
+  // Optional factory that produces a per-cell testID from the day-of-month
+  // (`day => 'history-day-' + day`). Stamps the cell's outer slot View
+  // for non-null cells; null padding cells stay anonymous.
+  cellTestID?: (day: number) => string;
 }
 
 const DEFAULT_WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'] as const;
@@ -32,9 +39,11 @@ const DEFAULT_WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'] as const;
 export function CalendarGrid({
   cells,
   weekdayLabels = DEFAULT_WEEKDAYS,
+  testID,
+  cellTestID,
 }: CalendarGridProps) {
   return (
-    <View>
+    <View testID={testID}>
       <View style={styles.weekRow}>
         {weekdayLabels.map((label, i) => (
           <Text key={i} style={styles.weekdayLabel}>
@@ -51,7 +60,11 @@ export function CalendarGrid({
           const isPartial = cell.value > 0 && cell.value < 100;
           const isRest = cell.value === 0;
           return (
-            <View key={i} style={styles.cellSlot}>
+            <View
+              key={i}
+              style={styles.cellSlot}
+              testID={cellTestID ? cellTestID(cell.day) : undefined}
+            >
               <View
                 style={[
                   styles.cell,

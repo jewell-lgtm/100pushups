@@ -194,42 +194,26 @@ function PersonalBestCard({
         Previous:{' '}
         {second ? `${second.reps} on ${formatDate(second.date)}` : EM_DASH}
       </Text>
-      <View testID="stats-triple">
-        <StatTriple
-          items={[
-            {
-              label: 'Yesterday',
-              value: String(yesterday ?? EM_DASH),
-            },
-            {
-              label: "Today's target",
-              value: String(target ?? EM_DASH),
-            },
-            {
-              label: 'Streak',
-              value:
-                streak > 0
-                  ? `${streak} ${streak === 1 ? 'd' : 'd'}`
-                  : EM_DASH,
-            },
-          ]}
-        />
-        {/* Invisible probes so e2e tests can still target the
-            individual cells; the StatTriple molecule renders the
-            visible values, but the existing assertions reach for
-            `stats-yesterday` / `stats-target` / `stats-streak` by
-            testID. Keep them adjacent (zero-height) so the layout is
-            untouched. */}
-        <View style={styles.hiddenProbes} pointerEvents="none">
-          <Text testID="stats-yesterday">{String(yesterday ?? EM_DASH)}</Text>
-          <Text testID="stats-target">{String(target ?? EM_DASH)}</Text>
-          <Text testID="stats-streak">
-            {streak > 0
-              ? `${streak} ${streak === 1 ? 'day' : 'days'}`
-              : EM_DASH}
-          </Text>
-        </View>
-      </View>
+      <StatTriple
+        testID="stats-triple"
+        items={[
+          {
+            testID: 'stats-yesterday',
+            label: 'Yesterday',
+            value: String(yesterday ?? EM_DASH),
+          },
+          {
+            testID: 'stats-target',
+            label: "Today's target",
+            value: String(target ?? EM_DASH),
+          },
+          {
+            testID: 'stats-streak',
+            label: 'Streak',
+            value: streak > 0 ? `${streak} d` : EM_DASH,
+          },
+        ]}
+      />
     </Card>
   );
 }
@@ -400,11 +384,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: 10,
     lineHeight: 19,
-  },
-  hiddenProbes: {
-    height: 0,
-    overflow: 'hidden',
-    opacity: 0,
   },
   cardTitle: {
     fontFamily: font.serif,

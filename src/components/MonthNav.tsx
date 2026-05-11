@@ -13,16 +13,21 @@ interface MonthNavProps {
   // navigator (e.g. disabling forward navigation in the current month).
   onPrev?: (e: GestureResponderEvent) => void;
   onNext?: (e: GestureResponderEvent) => void;
+  // Per-button testIDs so e2e suites can query each chevron without
+  // walking by index. Forwarded to the inner Pressable so the click
+  // target carries the testID.
+  prevTestID?: string;
+  nextTestID?: string;
 }
 
 // ‹ › month-stepper buttons used in the History screen header. Each is a
 // 34px outlined circle; sits in `ScreenHeader.trailing`. When a handler
 // is omitted the corresponding button dims and stops responding.
-export function MonthNav({ onPrev, onNext }: MonthNavProps) {
+export function MonthNav({ onPrev, onNext, prevTestID, nextTestID }: MonthNavProps) {
   return (
     <View style={styles.row}>
-      <NavButton glyph="‹" onPress={onPrev} accessibilityLabel="Previous month" />
-      <NavButton glyph="›" onPress={onNext} accessibilityLabel="Next month" />
+      <NavButton glyph="‹" onPress={onPrev} accessibilityLabel="Previous month" testID={prevTestID} />
+      <NavButton glyph="›" onPress={onNext} accessibilityLabel="Next month" testID={nextTestID} />
     </View>
   );
 }
@@ -31,9 +36,10 @@ interface NavButtonProps {
   glyph: string;
   onPress?: (e: GestureResponderEvent) => void;
   accessibilityLabel: string;
+  testID?: string;
 }
 
-function NavButton({ glyph, onPress, accessibilityLabel }: NavButtonProps) {
+function NavButton({ glyph, onPress, accessibilityLabel, testID }: NavButtonProps) {
   const disabled = onPress == null;
   return (
     <Pressable
@@ -41,6 +47,7 @@ function NavButton({ glyph, onPress, accessibilityLabel }: NavButtonProps) {
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ disabled }}
       onPress={onPress}
+      testID={testID}
       style={({ pressed }) => [
         styles.button,
         disabled && styles.disabled,
