@@ -132,6 +132,24 @@ export interface HistoryMonthResponse {
   recent: HistoryMonthRecent[];
 }
 
+// Mirror of `backend/src/routes/voice.ts` GET /context. Returns the
+// same five fields the client used to derive locally via
+// `repo.buildVoiceContext` (yesterday's total, personal best, streak,
+// today's plan target, session type) — sourced from the bearer-scoped
+// session/set history so the Workout greeting can warm up via
+// TanStack Query rather than a SQLite round-trip.
+export interface VoiceContextRequest {
+  exerciseId: string;
+}
+
+export interface VoiceContextResponse {
+  yesterdayTotal: number | null;
+  personalBest: number | null;
+  streak: number;
+  todayTarget: number | null;
+  sessionType: 'regular' | 'evaluation';
+}
+
 export interface IApiClient {
   voiceRespond(request: VoiceRequest): Promise<VoiceResponse>;
   voiceRespondStream(request: VoiceRequest): AsyncGenerator<StreamFrame, void, void>;
@@ -140,6 +158,7 @@ export interface IApiClient {
   reflectSession(request: ReflectSessionRequest): Promise<ReflectSessionResponse>;
   getStatsBundle(request: StatsBundleRequest): Promise<StatsBundleResponse>;
   getHistoryMonth(request: HistoryMonthRequest): Promise<HistoryMonthResponse>;
+  getVoiceContext(request: VoiceContextRequest): Promise<VoiceContextResponse>;
   isReachable(): Promise<boolean>;
 }
 
@@ -235,6 +254,28 @@ export function createApiClient(baseUrl: string, options: ApiClientOptions = {})
     return response.json();
   }
 
+  // GET-with-query — Voice context bundle. Replaces the local
+  // `repo.buildVoiceContext` read used to compose the Workout greeting;
+  // identical five-field shape so the hook's greeting composition logic
+  // stays untouched. Pre-fetched on Stats mount so the Workout screen
+  // is warm by the time the user navigates.
+  async function getVoiceContext(
+    request: VoiceContextRequest,
+  ): Promise<VoiceContextResponse> {
+    const query = new URLSearchParams({ exerciseId: request.exerciseId }).toString();
+    const response = await fetch(`${baseUrl}/api/v1/voice/context?${query}`, {
+      method: 'GET',
+      headers: { ...authHeaders },
+    });
+    if (response.status === 401 || response.status === 403) {
+      throw new AuthError(response.status);
+    }
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+    return response.json();
+  }
+
   async function* voiceRespondStream(
     request: VoiceRequest,
   ): AsyncGenerator<StreamFrame, void, void> {
@@ -297,6 +338,7 @@ export function createApiClient(baseUrl: string, options: ApiClientOptions = {})
     reflectSession,
     getStatsBundle,
     getHistoryMonth,
+    getVoiceContext,
     async isReachable(): Promise<boolean> {
       try {
         const response = await fetch(`${baseUrl}/health`, {

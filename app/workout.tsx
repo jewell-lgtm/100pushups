@@ -67,6 +67,7 @@ export default function WorkoutScreen() {
     reflectSession: async () => { throw new Error('api not ready'); },
     getStatsBundle: async () => { throw new Error('api not ready'); },
     getHistoryMonth: async () => { throw new Error('api not ready'); },
+    getVoiceContext: async () => { throw new Error('api not ready'); },
     isReachable: async () => false,
   };
 

@@ -13,6 +13,8 @@ import {
   StreamFrame,
   SyncRequest,
   SyncResponse,
+  VoiceContextRequest,
+  VoiceContextResponse,
 } from './client';
 import { clearAuth, loadAuth, saveAuth } from '../auth/authStore';
 import { registerDevice } from '../auth/registerClient';
@@ -160,6 +162,17 @@ function wrapWithRetry(inner: IApiClient): IApiClient {
         if (err instanceof AuthError) {
           const refreshed = await reauthOnce();
           return await refreshed.getHistoryMonth(req);
+        }
+        throw err;
+      }
+    },
+    async getVoiceContext(req: VoiceContextRequest): Promise<VoiceContextResponse> {
+      try {
+        return await inner.getVoiceContext(req);
+      } catch (err) {
+        if (err instanceof AuthError) {
+          const refreshed = await reauthOnce();
+          return await refreshed.getVoiceContext(req);
         }
         throw err;
       }

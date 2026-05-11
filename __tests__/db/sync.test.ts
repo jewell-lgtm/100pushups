@@ -92,6 +92,9 @@ function makeFakeApi(opts: {
     async getHistoryMonth() {
       throw new Error('not used');
     },
+    async getVoiceContext() {
+      throw new Error('not used');
+    },
     async isReachable(): Promise<boolean> {
       return opts.reachable ?? true;
     },

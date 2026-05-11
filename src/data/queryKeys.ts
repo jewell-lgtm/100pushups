@@ -32,7 +32,10 @@ export const queryKeys = {
   history: (year: number, month: number) => ['history', year, month] as const,
   settings: ['settings'] as const,
   plan: { weekly: ['plan', 'weekly'] as const },
-  voiceContext: ['voiceContext'] as const,
+  // Per-exerciseId cache slot. Stats prefetches `pushups` on mount so
+  // the Workout screen finds the bundle warm; future exercises (situps
+  // etc.) get their own slot and don't collide.
+  voiceContext: (exerciseId: string) => ['voiceContext', exerciseId] as const,
   // Per-session reflection key. The backend reflection is deterministic
   // for a given session id (and won't change once generated), so the
   // hook holds it with `staleTime: Infinity` and re-uses the cached

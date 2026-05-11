@@ -18,7 +18,7 @@
 //   muted bar   #2a2a3e   (matches the bar track on `app/complete.tsx`)
 //   sageBar     #6b8a6e   (matches the bar fill on `app/complete.tsx`)
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   RefreshControl,
   ScrollView,
@@ -35,6 +35,7 @@ import {
   type StatsBundleTodaySet,
   type StatsBundleWeekDay,
 } from '../src/api/client';
+import { getApiClient } from '../src/api/getApiClient';
 import { useSync } from '../src/hooks/useSync';
 
 const DAY_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
@@ -62,6 +63,23 @@ export default function StatsScreen() {
   // write path (until 14.7 decommissions them) but no longer back the
   // Stats screen.
   const { data } = useStatsBundle();
+
+  // Pre-fetch the voice-context bundle the Workout greeting needs so
+  // the screen lands warm. Fire-and-forget — `startSession` reads the
+  // same cache slot via `fetchQuery` and will wait for an in-flight
+  // request or fire its own if the prefetch hasn't landed yet. 30s
+  // staleTime matches the hook itself; a second mount within the
+  // window is a no-op.
+  useEffect(() => {
+    void queryClient.prefetchQuery({
+      queryKey: queryKeys.voiceContext('pushups'),
+      queryFn: async () => {
+        const client = await getApiClient();
+        return client.getVoiceContext({ exerciseId: 'pushups' });
+      },
+      staleTime: 30_000,
+    });
+  }, [queryClient]);
 
   // Re-pull when the user returns from a workout — totals/sets for
   // today only become accurate once the Complete screen has saved.

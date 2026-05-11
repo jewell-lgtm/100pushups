@@ -50,6 +50,7 @@ describe('runChatExchange', () => {
       reflectSession: jest.fn(),
       getStatsBundle: jest.fn(),
       getHistoryMonth: jest.fn(),
+      getVoiceContext: jest.fn(),
       isReachable: jest.fn().mockResolvedValue(true),
       voiceRespondStream: genFrom([
         { type: 'token', text: 'Go' },
@@ -96,6 +97,7 @@ describe('runChatExchange', () => {
       reflectSession: jest.fn(),
       getStatsBundle: jest.fn(),
       getHistoryMonth: jest.fn(),
+      getVoiceContext: jest.fn(),
       isReachable: jest.fn().mockResolvedValue(true),
       voiceRespondStream: genFrom([
         { type: 'done', toolCalls: [], spokenResponse: 'Say ready when you want to start.' },
@@ -126,6 +128,7 @@ describe('runChatExchange', () => {
       reflectSession: jest.fn(),
       getStatsBundle: jest.fn(),
       getHistoryMonth: jest.fn(),
+      getVoiceContext: jest.fn(),
       isReachable: jest.fn().mockResolvedValue(true),
       // eslint-disable-next-line require-yield
       voiceRespondStream: (async function* () {
@@ -162,6 +165,7 @@ describe('runChatExchange', () => {
       reflectSession: jest.fn(),
       getStatsBundle: jest.fn(),
       getHistoryMonth: jest.fn(),
+      getVoiceContext: jest.fn(),
       isReachable: jest.fn().mockResolvedValue(true),
       voiceRespondStream: (async function* () {
         yield { type: 'token', text: 'Thi' };
@@ -202,6 +206,7 @@ describe('runChatExchange', () => {
       reflectSession: jest.fn(),
       getStatsBundle: jest.fn(),
       getHistoryMonth: jest.fn(),
+      getVoiceContext: jest.fn(),
       isReachable: jest.fn().mockResolvedValue(true),
       voiceRespondStream: genFrom([
         { type: 'token', text: 'partial' },
@@ -235,6 +240,7 @@ describe('runChatExchange', () => {
       reflectSession: jest.fn(),
       getStatsBundle: jest.fn(),
       getHistoryMonth: jest.fn(),
+      getVoiceContext: jest.fn(),
       isReachable: jest.fn().mockResolvedValue(true),
       voiceRespondStream: genFrom([
         { type: 'token', text: 'hi' },

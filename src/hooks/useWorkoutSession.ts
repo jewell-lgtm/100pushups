@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as Crypto from 'expo-crypto';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   WorkoutSessionState,
   INITIAL_STATE,
@@ -8,12 +9,13 @@ import {
 } from '../state/WorkoutState';
 import { ITTSManager } from '../voice/TTSManager';
 import { IVoiceManager } from '../voice/VoiceManager';
-import { IApiClient, normalizeToolCall } from '../api/client';
+import { IApiClient, normalizeToolCall, VoiceContextResponse } from '../api/client';
 import { IRepository } from '../db/repository';
 import { VoiceContext, VoiceResponse } from '../api/types';
 import { fallbackParse } from '../voice/FallbackParser';
 import { ChatMessage, runChatExchange } from './chatLog';
 import { filterValidTools } from './validTools';
+import { queryKeys } from '../data/queryKeys';
 import {
   EVENT_SESSION_ENDED,
   EVENT_SET_COMPLETED,
@@ -51,6 +53,13 @@ export function useWorkoutSession({
   const stateRef = useRef(state);
   stateRef.current = state;
   const sessionIdRef = useRef<string | null>(null);
+  // Phase 14.5: voice context comes from the bundled `/api/v1/voice/context`
+  // endpoint via TanStack Query. The Stats screen pre-fetches the same key
+  // on mount, so by the time `startSession` lands the bundle is typically
+  // already cached. `fetchQuery` serves from cache when warm and fires a
+  // fresh round-trip otherwise — no race between hook mount and the
+  // imperative call site.
+  const queryClient = useQueryClient();
 
   const processEffects = useCallback(
     async (effects: SideEffect[]) => {
@@ -210,7 +219,11 @@ export function useWorkoutSession({
     const id = Crypto.randomUUID();
     sessionIdRef.current = id;
 
-    const context = await repo.buildVoiceContext(exerciseId);
+    const context = await queryClient.fetchQuery<VoiceContextResponse>({
+      queryKey: queryKeys.voiceContext(exerciseId),
+      queryFn: async () => api.getVoiceContext({ exerciseId }),
+      staleTime: 30_000,
+    });
 
     // Analytics: small payload, no plan body / no personal context. We
     // track whether a real plan target drove today's number so we can
@@ -266,7 +279,7 @@ export function useWorkoutSession({
     ]);
     await tts.speak(greeting);
     await dispatch({ type: 'GREETING_DONE' });
-  }, [repo, exerciseId, tts, dispatch]);
+  }, [api, repo, exerciseId, tts, dispatch, queryClient]);
 
   // Analytics: fire `set_completed` when the reducer appends to setsCompleted.
   // The reducer is pure (no side effects); watching length here keeps the
