@@ -1,13 +1,16 @@
-// Covers the pure data-loading + fallback logic for the Complete
-// screen. Tests the `loadCompleteData` helper directly — the React
-// wrapper (`useCompleteData`) needs an RN harness which we deliberately
-// avoid; the spec calls this out (Phase 11.4.2 test plan).
+// Covers the pure local-DB loading logic for the Complete screen.
+// Tests the `loadCompleteData` helper directly — the React wrapper
+// (`useCompleteData`) needs an RN harness which we deliberately avoid.
+//
+// Phase 14.5 update: the reflection fetch has moved out of this module
+// and into `src/data/hooks/useReflection.ts` (TanStack Query). The
+// reflection-fallback cases formerly covered here now live in
+// `__tests__/data/useReflection.test.ts`. What remains here is the
+// repo-only contract: session + sets read in parallel, with a
+// null-session fallback when the row isn't found.
 
 import { Session, WorkoutSet } from '../../src/api/types';
-import {
-  COMPLETE_FALLBACK_REFLECTION,
-  loadCompleteData,
-} from '../../src/screens/useCompleteData';
+import { loadCompleteData } from '../../src/screens/useCompleteData';
 
 const fakeSession: Session = {
   id: 'sess-1',
@@ -42,82 +45,58 @@ function makeRepo() {
 }
 
 describe('loadCompleteData', () => {
-  it('returns the reflection text + hasReflection=true on a backend string', async () => {
+  it('returns the session + sets from the local repo', async () => {
     const repo = makeRepo();
-    const api = {
-      reflectSession: jest.fn(async () => ({
-        reflection: 'You smashed today — try four sets of twelve tomorrow.',
-      })),
-    };
 
-    const out = await loadCompleteData({ api, repo, sessionId: 'sess-1' });
+    const out = await loadCompleteData({ repo, sessionId: 'sess-1' });
 
     expect(out.session).toEqual(fakeSession);
     expect(out.sets).toEqual(fakeSets);
-    expect(out.reflection).toBe(
-      'You smashed today — try four sets of twelve tomorrow.',
-    );
-    expect(out.hasReflection).toBe(true);
-    expect(api.reflectSession).toHaveBeenCalledWith({ sessionId: 'sess-1' });
-  });
-
-  it('falls back to the static string on `{ reflection: null }`', async () => {
-    const repo = makeRepo();
-    const api = {
-      reflectSession: jest.fn(async () => ({ reflection: null })),
-    };
-
-    const out = await loadCompleteData({ api, repo, sessionId: 'sess-1' });
-
-    expect(out.reflection).toBe(COMPLETE_FALLBACK_REFLECTION);
-    expect(out.hasReflection).toBe(false);
-  });
-
-  it('falls back to the static string when `reflectSession` rejects', async () => {
-    const repo = makeRepo();
-    const api = {
-      reflectSession: jest.fn(async () => {
-        throw new Error('network down');
-      }),
-    };
-
-    const out = await loadCompleteData({ api, repo, sessionId: 'sess-1' });
-
-    expect(out.reflection).toBe(COMPLETE_FALLBACK_REFLECTION);
-    expect(out.hasReflection).toBe(false);
-    // DB reads still succeed — totals/bars must render even when the
-    // network is broken.
-    expect(out.session).toEqual(fakeSession);
-    expect(out.sets).toEqual(fakeSets);
-  });
-
-  it('falls back when the backend returns an empty-string reflection', async () => {
-    // Defensive: the backend currently coerces "" → null at the route,
-    // but the contract is stringly-typed and the screen treats both as
-    // fallback.
-    const repo = makeRepo();
-    const api = {
-      reflectSession: jest.fn(async () => ({ reflection: '' })),
-    };
-
-    const out = await loadCompleteData({ api, repo, sessionId: 'sess-1' });
-
-    expect(out.reflection).toBe(COMPLETE_FALLBACK_REFLECTION);
-    expect(out.hasReflection).toBe(false);
+    expect(repo.getSessionById).toHaveBeenCalledWith('sess-1');
+    expect(repo.getSetsForSession).toHaveBeenCalledWith('sess-1');
   });
 
   it('returns null session + empty sets when the local DB has no row', async () => {
     const repo = makeRepo();
-    const api = {
-      reflectSession: jest.fn(async () => ({ reflection: 'hi' })),
-    };
 
-    const out = await loadCompleteData({ api, repo, sessionId: 'unknown' });
+    const out = await loadCompleteData({ repo, sessionId: 'unknown' });
 
     expect(out.session).toBeNull();
     expect(out.sets).toEqual([]);
-    // Network still resolves — we don't gate the reflection on the
-    // local DB lookup, they run in parallel.
-    expect(out.hasReflection).toBe(true);
+  });
+
+  it('runs the two repo reads in parallel', async () => {
+    // The two reads target different tables and there's no dependency
+    // between them — `Promise.all` keeps the worst case bounded by the
+    // slower read. Asserted by starting both fakes from a shared promise
+    // and resolving them in the opposite order from invocation.
+    let resolveSession: (v: Session) => void = () => {};
+    let resolveSets: (v: WorkoutSet[]) => void = () => {};
+    const sessionP = new Promise<Session>((r) => {
+      resolveSession = r;
+    });
+    const setsP = new Promise<WorkoutSet[]>((r) => {
+      resolveSets = r;
+    });
+    const repo = {
+      getSessionById: jest.fn(() => sessionP),
+      getSetsForSession: jest.fn(() => setsP),
+    };
+
+    const out = loadCompleteData({ repo, sessionId: 'sess-1' });
+
+    // Both fakes have been entered before either resolves — i.e. they
+    // were dispatched in parallel, not sequentially.
+    expect(repo.getSessionById).toHaveBeenCalledTimes(1);
+    expect(repo.getSetsForSession).toHaveBeenCalledTimes(1);
+
+    // Resolve sets first, then session — order-independence.
+    resolveSets(fakeSets);
+    resolveSession(fakeSession);
+
+    await expect(out).resolves.toEqual({
+      session: fakeSession,
+      sets: fakeSets,
+    });
   });
 });

@@ -25,12 +25,11 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { getDatabase } from '../src/db/getDatabase';
 import { createRepository, IRepository } from '../src/db/repository';
-import { IApiClient } from '../src/api/client';
-import { getApiClient } from '../src/api/getApiClient';
 import {
   COMPLETE_FALLBACK_REFLECTION,
   useCompleteData,
 } from '../src/screens/useCompleteData';
+import { useReflection } from '../src/data/hooks/useReflection';
 import {
   EVENT_SESSION_REFLECTION_VIEWED,
   track,
@@ -41,38 +40,61 @@ export default function CompleteScreen() {
   const params = useLocalSearchParams<{ sessionId?: string }>();
   const sessionId = typeof params.sessionId === 'string' ? params.sessionId : null;
 
-  // Resolve the singletons post-mount, mirroring `app/plan.tsx` /
-  // `app/workout.tsx`. Until both resolve we render the loading state.
-  const [api, setApi] = useState<IApiClient | null>(null);
+  // Resolve the SQLite singleton post-mount, mirroring `app/plan.tsx` /
+  // `app/workout.tsx`. Until it resolves we render the loading state.
+  // The api client is no longer touched here — `useReflection` calls
+  // `getApiClient()` inside its queryFn.
   const [repo, setRepo] = useState<IRepository | null>(null);
 
   useEffect(() => {
     (async () => {
-      const [db, client] = await Promise.all([getDatabase(), getApiClient()]);
+      const db = await getDatabase();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       setRepo(createRepository(db as any));
-      setApi(client);
     })();
   }, []);
 
   const deps = useMemo(() => {
-    if (!api || !repo || !sessionId) return null;
-    return { api, repo, sessionId };
-  }, [api, repo, sessionId]);
+    if (!repo || !sessionId) return null;
+    return { repo, sessionId };
+  }, [repo, sessionId]);
 
-  const { data, loading } = useCompleteData(deps);
+  const { data } = useCompleteData(deps);
+  const reflectionQuery = useReflection(sessionId);
 
-  // Fire the analytics event exactly once, when the reflection resolves.
-  // `hasReflection` is the only dimension we send — never the text.
+  // The reflection card has three render branches:
+  //  - loading (query in flight) → ActivityIndicator;
+  //  - non-empty backend string → render it (testID complete-reflection-text);
+  //  - everything else (null reflection, error, no data) → static
+  //    fallback (testID complete-reflection-fallback).
+  const reflectionText =
+    typeof reflectionQuery.data?.reflection === 'string' &&
+    reflectionQuery.data.reflection.length > 0
+      ? reflectionQuery.data.reflection
+      : null;
+  const hasReflection = reflectionText !== null;
+
+  // Fire the analytics event exactly once, when the reflection settles
+  // (success or error/null). `hasReflection` is the only dimension we
+  // send — never the text.
   const trackedRef = useRef(false);
   useEffect(() => {
-    if (data && !trackedRef.current) {
+    if (
+      !trackedRef.current &&
+      sessionId !== null &&
+      !reflectionQuery.isLoading &&
+      (reflectionQuery.isSuccess || reflectionQuery.isError)
+    ) {
       trackedRef.current = true;
-      track(EVENT_SESSION_REFLECTION_VIEWED, {
-        hasReflection: data.hasReflection,
-      });
+      track(EVENT_SESSION_REFLECTION_VIEWED, { hasReflection });
     }
-  }, [data]);
+  }, [
+    sessionId,
+    reflectionQuery.isLoading,
+    reflectionQuery.isSuccess,
+    reflectionQuery.isError,
+    hasReflection,
+  ]);
 
   const totalReps = data?.session?.totalReps ?? 0;
   const sets = data?.sets ?? [];
@@ -125,7 +147,7 @@ export default function CompleteScreen() {
 
       <View style={styles.reflectionCard} testID="complete-reflection-card">
         <Text style={styles.kicker}>COACH</Text>
-        {loading || !data ? (
+        {reflectionQuery.isLoading ? (
           <ActivityIndicator
             color="#e94560"
             testID="complete-reflection-loading"
@@ -135,12 +157,12 @@ export default function CompleteScreen() {
           <Text
             style={styles.reflectionText}
             testID={
-              data.hasReflection
+              hasReflection
                 ? 'complete-reflection-text'
                 : 'complete-reflection-fallback'
             }
           >
-            {data.reflection || COMPLETE_FALLBACK_REFLECTION}
+            {reflectionText ?? COMPLETE_FALLBACK_REFLECTION}
           </Text>
         )}
       </View>

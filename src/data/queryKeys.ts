@@ -15,6 +15,7 @@
  *   - settings:     single bag, server-owned in 14.3
  *   - plan.weekly:  the AI-generated week plan
  *   - voiceContext: cached voice-loop context bundle
+ *   - reflection:   per-session LLM coach reflection (immutable per id)
  */
 
 export const queryKeys = {
@@ -32,4 +33,9 @@ export const queryKeys = {
   settings: ['settings'] as const,
   plan: { weekly: ['plan', 'weekly'] as const },
   voiceContext: ['voiceContext'] as const,
+  // Per-session reflection key. The backend reflection is deterministic
+  // for a given session id (and won't change once generated), so the
+  // hook holds it with `staleTime: Infinity` and re-uses the cached
+  // string when the user navigates back into the Complete screen.
+  reflection: (sessionId: string) => ['reflection', sessionId] as const,
 } as const;
