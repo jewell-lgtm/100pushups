@@ -9,6 +9,8 @@ import { workoutRoutes } from './routes/workouts.js';
 import { planningRoutes } from './routes/planning.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { authRoutes } from './routes/auth.js';
+import { statsRoutes } from './routes/stats.js';
+import { historyRoutes } from './routes/history.js';
 import { bearerAuth } from './middleware/bearerAuth.js';
 import { requestId } from './middleware/requestId.js';
 import { shutdownAnalytics } from './analytics.js';
@@ -60,10 +62,12 @@ app.route('/auth', authRoutes(authSecret, registerApiKey));
 // Bearer guard everything under /api/*. Public routes above are unaffected.
 app.use('/api/*', bearerAuth(authSecret));
 
-app.route('/api/v1/voice', voiceRoutes(ollama));
+app.route('/api/v1/voice', voiceRoutes(ollama, db));
 app.route('/api/v1/workouts', workoutRoutes(db));
 app.route('/api/v1/plan', planningRoutes(db, OLLAMA_URL, OLLAMA_MODEL, ollamaAuth));
 app.route('/api/v1/session', sessionRoutes(db, ollama));
+app.route('/api/v1/stats', statsRoutes(db));
+app.route('/api/v1/history', historyRoutes(db));
 
 const server = serve({ fetch: app.fetch, port: PORT }, (info) => {
   console.log(`pushup-api listening on :${info.port} (ollama: ${OLLAMA_URL}, model: ${OLLAMA_MODEL})`);

@@ -1,16 +1,46 @@
 import { Hono } from 'hono';
 import { stream } from 'hono/streaming';
+import type Database from 'better-sqlite3';
 import { IOllamaClient, VoiceContext, OllamaResponse, StreamFrame } from '../ollama.js';
 import { generateSpokenResponse } from '../voiceFallback.js';
 import { trackVoiceRespond } from '../analytics.js';
+import {
+  getPersonalBestForDevice,
+  getStreakForDevice,
+  getYesterdayTotalForDevice,
+  getTodayTargetForDevice,
+} from '../stats.js';
 
 interface VoiceRequest {
   transcript: string;
   context: VoiceContext;
 }
 
-export function voiceRoutes(ollama: IOllamaClient) {
+// Server-side `buildVoiceContext`. Returns the same shape the client
+// builds in `src/db/repository.ts:buildVoiceContext`, sourced from
+// the bearer-scoped session/set history. Phase 14.2 partial — additive,
+// the client can keep building its own context until callers migrate.
+// `db` is optional so the existing in-memory test rigs that wire voice
+// without a database keep working; the route 503s when db is missing.
+export function voiceRoutes(ollama: IOllamaClient, db?: Database.Database) {
   const app = new Hono();
+
+  app.get('/context', (c) => {
+    if (!db) {
+      return c.json({ error: 'voice context unavailable: no db' }, 503);
+    }
+    const exerciseId = c.req.query('exerciseId') ?? 'pushups';
+    const deviceId = c.get('deviceId' as never) as string;
+
+    const pb = getPersonalBestForDevice(db, deviceId, exerciseId);
+    return c.json({
+      yesterdayTotal: getYesterdayTotalForDevice(db, deviceId, exerciseId),
+      personalBest: pb?.reps ?? null,
+      streak: getStreakForDevice(db, deviceId, exerciseId),
+      todayTarget: getTodayTargetForDevice(db, deviceId, exerciseId),
+      sessionType: 'regular' as const,
+    });
+  });
 
   app.post('/respond', async (c) => {
     const body = await c.req.json<VoiceRequest>();
