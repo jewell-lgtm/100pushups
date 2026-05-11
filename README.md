@@ -65,10 +65,16 @@ which is **not reachable from the phone** — override either by editing
 `.env.local` before the build or by passing them inline:
 
 ```
-EXPO_PUBLIC_API_BASE=https://pushups.example/ \
+EXPO_PUBLIC_API_BASE=https://pushups.wire.mattjewell.co.uk/ \
 EXPO_PUBLIC_REGISTER_API_KEY=<shared secret> \
 mise exec -- npx expo run:android --device
 ```
+
+TLS terminates at the edge Caddy (managed out-of-band, in the
+`mattjewell.co.uk` repo). Traffic inside the VPS is plain HTTP —
+`k8s/ingress.yaml` uses the `web` entrypoint deliberately. The phone
+always talks to the backend over HTTPS via the public hostname; LAN
+addressing is not supported.
 
 On first launch the app exchanges `REGISTER_API_KEY` for a per-device
 bearer token via `/auth/register` and stores it in `expo-secure-store`.
