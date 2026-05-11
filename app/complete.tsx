@@ -1,27 +1,18 @@
-// Session Complete screen (Phase 11.4.2).
+// Session Complete screen (Phase 11.4.2, re-skinned in Phase 12.6).
 //
 // Rendered after a workout is saved. Shows: total reps, per-set mini
 // bar chart, a reflection card (loading → backend string OR static
 // fallback), and two CTAs (voice reflection coming-soon; "Done for
 // today" returns to Stats).
 //
-// Functional cut only — visual polish (Fraunces serif, sage palette,
-// the polished ThinkingDots / SessionBars / PrimaryButton molecules)
-// lands in Phase 12.6 once the Phase 12 design system is merged. The
-// componentry referenced by the spec lives in `.claude/worktrees/` and
-// hasn't been merged to main yet, so this screen uses plain RN
-// primitives that match the styling of `app/index.tsx` and
-// `app/plan.tsx`.
+// Phase 12.6: swapped plain RN primitives for the Phase 12 design
+// system — `Card`, `SessionBars`, `ThinkingDots`, `PrimaryButton`,
+// `Kicker`, `Waveform` — and the cream / sage / Fraunces palette.
+// Data-flow (`useCompleteData`, `useReflection`, `trackedRef` analytics
+// gate) is unchanged.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { getDatabase } from '../src/db/getDatabase';
 import { createRepository, IRepository } from '../src/db/repository';
@@ -34,6 +25,13 @@ import {
   EVENT_SESSION_REFLECTION_VIEWED,
   track,
 } from '../src/analytics/posthog';
+import { colors, font, radii, spacing } from '../src/theme';
+import { Card } from '../src/components/Card';
+import { SessionBars } from '../src/components/SessionBars';
+import { ThinkingDots } from '../src/components/ThinkingDots';
+import { PrimaryButton } from '../src/components/PrimaryButton';
+import { Kicker } from '../src/components/Kicker';
+import { Waveform } from '../src/components/Waveform';
 
 export default function CompleteScreen() {
   const router = useRouter();
@@ -63,7 +61,7 @@ export default function CompleteScreen() {
   const reflectionQuery = useReflection(sessionId);
 
   // The reflection card has three render branches:
-  //  - loading (query in flight) → ActivityIndicator;
+  //  - loading (query in flight) → ThinkingDots;
   //  - non-empty backend string → render it (testID complete-reflection-text);
   //  - everything else (null reflection, error, no data) → static
   //    fallback (testID complete-reflection-fallback).
@@ -98,6 +96,7 @@ export default function CompleteScreen() {
 
   const totalReps = data?.session?.totalReps ?? 0;
   const sets = data?.sets ?? [];
+  const repsList = sets.map((s) => s.reps);
 
   const goHome = () => {
     // replace so the back gesture from Stats doesn't re-enter this
@@ -112,47 +111,38 @@ export default function CompleteScreen() {
       testID="complete-screen"
     >
       <View style={styles.header}>
-        <Text style={styles.kicker}>SESSION COMPLETE</Text>
-        <Text style={styles.totalReps} testID="complete-total-reps">
-          {totalReps}
-        </Text>
-        <Text style={styles.caption}>done.</Text>
+        <Kicker>Session complete</Kicker>
+        <View style={styles.totalRow}>
+          <Text style={styles.totalReps} testID="complete-total-reps">
+            {totalReps}
+          </Text>
+          <Text style={styles.doneCaption}>done.</Text>
+        </View>
       </View>
 
-      <View style={styles.barsCard} testID="complete-bars">
+      <Card style={styles.barsCard} testID="complete-bars">
         {sets.length === 0 ? (
           <Text style={styles.empty}>No sets recorded.</Text>
         ) : (
-          <View style={styles.barsRow}>
-            {sets.map((set) => {
-              const maxReps = Math.max(...sets.map((s) => s.reps), 1);
-              const heightPct = Math.max(0.1, set.reps / maxReps);
-              return (
-                <View key={set.id} style={styles.barColumn}>
-                  <View style={styles.barTrack}>
-                    <View
-                      style={[
-                        styles.barFill,
-                        { height: `${Math.round(heightPct * 100)}%` },
-                      ]}
-                    />
-                  </View>
-                  <Text style={styles.barLabel}>{set.reps}</Text>
-                </View>
-              );
-            })}
-          </View>
+          <SessionBars reps={repsList} height={64} showLabels />
         )}
-      </View>
+      </Card>
 
-      <View style={styles.reflectionCard} testID="complete-reflection-card">
-        <Text style={styles.kicker}>COACH</Text>
+      <Card
+        variant="sage"
+        style={styles.reflectionCard}
+        testID="complete-reflection-card"
+      >
+        <View style={styles.reflectionHeader}>
+          <Text style={styles.reflectionKicker}>From your coach</Text>
+        </View>
         {reflectionQuery.isLoading ? (
-          <ActivityIndicator
-            color="#e94560"
-            testID="complete-reflection-loading"
+          <View
             style={styles.reflectionLoading}
-          />
+            testID="complete-reflection-loading"
+          >
+            <ThinkingDots color="#ffffff" />
+          </View>
         ) : (
           <Text
             style={styles.reflectionText}
@@ -165,29 +155,37 @@ export default function CompleteScreen() {
             {reflectionText ?? COMPLETE_FALLBACK_REFLECTION}
           </Text>
         )}
-      </View>
+        <View style={styles.reflectionWaveform}>
+          <Waveform
+            active={false}
+            color="#ffffff"
+            accent={colors.sageSoft}
+            width={180}
+            height={50}
+          />
+        </View>
+      </Card>
 
       <View style={styles.actions}>
-        <View style={styles.voiceCtaWrap}>
-          <TouchableOpacity
-            style={[styles.outlinedButton, styles.disabledButton]}
-            disabled
-            testID="complete-voice-cta"
-          >
-            <Text style={styles.outlinedButtonText}>Reflect by voice</Text>
-          </TouchableOpacity>
-          <View style={styles.soonBadge}>
-            <Text style={styles.soonBadgeText}>Coming soon</Text>
-          </View>
-        </View>
-
-        <TouchableOpacity
-          style={styles.primaryButton}
+        <PrimaryButton
+          label="Reflect by voice"
+          variant="outlined"
+          disabled
+          style={styles.actionButton}
+          testID="complete-voice-cta"
+          trailing={
+            <View style={styles.soonBadge}>
+              <Text style={styles.soonBadgeText}>Coming soon</Text>
+            </View>
+          }
+        />
+        <PrimaryButton
+          label="Done for today"
+          variant="filled"
           onPress={goHome}
+          style={styles.actionButton}
           testID="complete-done-cta"
-        >
-          <Text style={styles.primaryButtonText}>Done for today</Text>
-        </TouchableOpacity>
+        />
       </View>
     </ScrollView>
   );
@@ -196,139 +194,94 @@ export default function CompleteScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#16213e',
+    backgroundColor: colors.bg,
   },
   content: {
-    padding: 24,
+    padding: spacing[6],
     paddingBottom: 48,
-    gap: 24,
+    gap: spacing[5],
   },
   header: {
-    alignItems: 'center',
-    gap: 4,
-    marginTop: 24,
+    gap: spacing[1],
+    marginTop: spacing[4],
   },
-  kicker: {
-    color: '#a0a0b0',
-    fontSize: 11,
-    letterSpacing: 2,
-    fontWeight: '600',
+  totalRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: spacing[4],
+    marginTop: spacing[2],
   },
   totalReps: {
-    color: '#fff',
-    // Falls back to the platform serif when Fraunces isn't loaded —
-    // Phase 12.3 wires the real face via expo-font.
-    fontFamily: 'serif',
-    fontSize: 96,
-    fontWeight: '300',
-    lineHeight: 100,
-    marginTop: 8,
+    color: colors.ink,
+    fontFamily: font.serif,
+    fontSize: 120,
+    lineHeight: 108,
+    letterSpacing: -6,
   },
-  caption: {
-    color: '#a0a0b0',
-    fontFamily: 'serif',
+  doneCaption: {
+    color: colors.sage,
+    fontFamily: font.serifItalic,
     fontStyle: 'italic',
-    fontSize: 18,
-  },
-  barsCard: {
-    backgroundColor: '#1a1a2e',
-    borderRadius: 16,
-    padding: 20,
-    minHeight: 140,
-    justifyContent: 'center',
+    fontSize: 22,
   },
   empty: {
-    color: '#a0a0b0',
+    color: colors.inkDim,
     textAlign: 'center',
     fontSize: 13,
+    fontFamily: font.sans,
   },
-  barsRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-around',
-    height: 100,
-    gap: 6,
-  },
-  barColumn: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    height: '100%',
-    gap: 6,
-  },
-  barTrack: {
-    width: '60%',
-    flex: 1,
-    backgroundColor: '#2a2a3e',
-    borderRadius: 4,
-    justifyContent: 'flex-end',
-    overflow: 'hidden',
-  },
-  barFill: {
-    width: '100%',
-    backgroundColor: '#6b8a6e',
-    borderRadius: 4,
-  },
-  barLabel: {
-    color: '#a0a0b0',
-    fontSize: 11,
+  barsCard: {
+    padding: spacing[5],
   },
   reflectionCard: {
-    backgroundColor: '#1a1a2e',
-    borderRadius: 16,
-    padding: 20,
-    gap: 12,
-    minHeight: 100,
+    padding: spacing[5],
+    gap: spacing[3],
+    borderRadius: radii.lg,
+  },
+  reflectionHeader: {
+    marginBottom: spacing[1],
+  },
+  reflectionKicker: {
+    color: '#ffffff',
+    opacity: 0.7,
+    fontFamily: font.sans,
+    fontSize: 11,
+    letterSpacing: 11 * 0.15,
+    textTransform: 'uppercase',
   },
   reflectionLoading: {
     alignSelf: 'flex-start',
-    marginTop: 8,
+    paddingVertical: spacing[2],
   },
   reflectionText: {
-    color: '#fff',
-    fontSize: 15,
-    lineHeight: 22,
+    color: '#ffffff',
+    fontFamily: font.serif,
+    fontSize: 18,
+    lineHeight: 25,
+  },
+  reflectionWaveform: {
+    alignItems: 'center',
+    marginTop: spacing[2],
   },
   actions: {
-    gap: 12,
-    marginTop: 8,
+    flexDirection: 'row',
+    gap: spacing[3],
+    marginTop: spacing[2],
   },
-  voiceCtaWrap: {
-    alignItems: 'stretch',
-    gap: 4,
-  },
-  outlinedButton: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#a0a0b0',
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  disabledButton: {
-    opacity: 0.5,
-  },
-  outlinedButtonText: {
-    color: '#a0a0b0',
-    fontSize: 15,
-    fontWeight: '600',
+  actionButton: {
+    flex: 1,
   },
   soonBadge: {
-    alignSelf: 'center',
+    paddingHorizontal: spacing[2],
+    paddingVertical: 2,
+    borderRadius: radii.pill,
+    backgroundColor: colors.surfaceAlt,
   },
   soonBadgeText: {
-    color: '#a0a0b0',
-    fontSize: 11,
+    color: colors.inkDim,
+    fontFamily: font.sansItalic,
     fontStyle: 'italic',
-  },
-  primaryButton: {
-    backgroundColor: '#e94560',
-    borderRadius: 999,
-    paddingVertical: 16,
-    alignItems: 'center',
-  },
-  primaryButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 10,
+    letterSpacing: 0.4,
   },
 });
