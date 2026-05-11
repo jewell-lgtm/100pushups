@@ -25,6 +25,7 @@ interface MicButtonProps {
   //   speaking  — coach is talking; button dims to discourage interruption
   state: MicState;
   onPress?: (e: GestureResponderEvent) => void;
+  testID?: string;
 }
 
 const BUTTON_SIZE = 76;
@@ -38,7 +39,7 @@ const PULSE_DURATION_MS = 1400;
 // When `state === 'speaking'` the whole button dims to 60% so the user
 // doesn't tap mid-coach-message (the listener would discard the audio
 // anyway). The pulse ring is gated to listening only.
-export function MicButton({ state, onPress }: MicButtonProps) {
+export function MicButton({ state, onPress, testID }: MicButtonProps) {
   // 0 → 1 progresses through one pulse cycle. Repeats forever while
   // listening; pinned to 0 otherwise so the ring stays invisible.
   const pulse = useSharedValue(0);
@@ -77,6 +78,7 @@ export function MicButton({ state, onPress }: MicButtonProps) {
         accessibilityLabel="Voice input"
         accessibilityState={{ disabled: state === 'speaking' }}
         onPress={state === 'speaking' ? undefined : onPress}
+        testID={testID}
         style={({ pressed }) => [
           styles.button,
           { opacity: buttonOpacity },

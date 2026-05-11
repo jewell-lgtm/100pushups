@@ -315,7 +315,7 @@ export default function WorkoutScreen() {
       {/* Bottom dock — status + mic button */}
       <View style={styles.dock}>
         <Text style={styles.dockStatus}>{dockStatusLabel}</Text>
-        <MicButton state={micState} onPress={() => setMicSheetOpen(true)} />
+        <MicButton state={micState} testID="mic-button" onPress={() => setMicSheetOpen(true)} />
       </View>
 
       {/* TextInput sheet — MVP voice harness. Tapping the mic button

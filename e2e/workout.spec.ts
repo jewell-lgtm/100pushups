@@ -17,6 +17,10 @@ import { test, expect, Page } from '@playwright/test';
  */
 
 async function utter(page: Page, text: string) {
+  // Phase 12.6+13.4: the TextInput now lives inside a Modal that opens
+  // when the user taps the mic button. The Send button auto-closes the
+  // modal on submit, so we re-open per utterance.
+  await page.getByTestId('mic-button').click();
   const input = page.getByRole('textbox');
   await input.click();
   // RN-Web's controlled <TextInput> doesn't always pick up Playwright's

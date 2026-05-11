@@ -10,6 +10,9 @@ import { test, expect, Page } from '@playwright/test';
  */
 
 async function utter(page: Page, text: string) {
+  // Phase 12.6+13.4: TextInput sits inside a Modal opened by the mic
+  // button. Tap mic → type → Send (which auto-closes the modal).
+  await page.getByTestId('mic-button').click();
   const input = page.getByRole('textbox');
   await input.click();
   await input.fill('');
