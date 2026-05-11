@@ -4,6 +4,8 @@ import {
   GeneratePlanRequest,
   GeneratePlanResponse,
   IApiClient,
+  ReflectSessionRequest,
+  ReflectSessionResponse,
   StreamFrame,
   SyncRequest,
   SyncResponse,
@@ -121,6 +123,17 @@ function wrapWithRetry(inner: IApiClient): IApiClient {
         if (err instanceof AuthError) {
           const refreshed = await reauthOnce();
           return await refreshed.generateWeeklyPlan(req);
+        }
+        throw err;
+      }
+    },
+    async reflectSession(req: ReflectSessionRequest): Promise<ReflectSessionResponse> {
+      try {
+        return await inner.reflectSession(req);
+      } catch (err) {
+        if (err instanceof AuthError) {
+          const refreshed = await reauthOnce();
+          return await refreshed.reflectSession(req);
         }
         throw err;
       }

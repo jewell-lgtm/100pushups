@@ -64,6 +64,7 @@ export default function WorkoutScreen() {
     voiceRespondStream: async function* () { throw new Error('api not ready'); },
     syncWorkouts: async () => { throw new Error('api not ready'); },
     generateWeeklyPlan: async () => { throw new Error('api not ready'); },
+    reflectSession: async () => { throw new Error('api not ready'); },
     isReachable: async () => false,
   };
 
@@ -80,10 +81,14 @@ export default function WorkoutScreen() {
       insertSet: async () => {},
     },
     exerciseId: 'pushups',
-    onSessionSaved: () => {
+    onSessionSaved: (sessionId: string) => {
       // Fire-and-forget — the inflight lock in useSync coalesces with
       // the foreground listener, and sync errors are caught internally.
       void triggerSync();
+      // Route to the Complete screen. `replace` (not `push`) so the
+      // hardware back gesture lands on Stats, not back into the
+      // already-ended workout.
+      router.replace({ pathname: '/complete', params: { sessionId } });
     },
   });
 
@@ -104,11 +109,10 @@ export default function WorkoutScreen() {
     }
   }, [ready]);
 
-  useEffect(() => {
-    if (state.appState === 'idle' && state.userFeedback !== null) {
-      router.back();
-    }
-  }, [state.appState, state.userFeedback]);
+  // Navigation away from this screen happens in `onSessionSaved` above
+  // — once SAVE_SESSION lands we `router.replace('/complete?...')`, which
+  // also covers the case where the reducer transitions to idle via
+  // record_feedback. No second effect needed here.
 
   // Auto-scroll on new messages or token streaming. Tracking the latest
   // coach message text means we re-scroll as deltas arrive.

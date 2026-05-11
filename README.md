@@ -196,6 +196,7 @@ Client-side (`src/analytics/posthog.ts`):
 | `voice_utterance_routed` | `tool`, `fromState`, `fallbackUsed` | `useWorkoutSession.handleTranscript` |
 | `sync_failed` | `pendingCount`, `errorClass` | `src/db/sync.ts` catch path |
 | `plan_generated` | `exerciseId` | `app/plan.tsx` after a successful generate |
+| `session_reflection_viewed` | `hasReflection` | `app/complete.tsx` once the reflection resolves (true = string from backend, false = null/error → static fallback) |
 
 Backend-side (`backend/src/analytics.ts`):
 

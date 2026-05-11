@@ -83,6 +83,9 @@ function makeFakeApi(opts: {
     async generateWeeklyPlan() {
       throw new Error('not used');
     },
+    async reflectSession() {
+      throw new Error('not used');
+    },
     async isReachable(): Promise<boolean> {
       return opts.reachable ?? true;
     },

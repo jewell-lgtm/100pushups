@@ -30,6 +30,7 @@ export const EVENT_SESSION_ENDED = 'session_ended';
 export const EVENT_VOICE_UTTERANCE_ROUTED = 'voice_utterance_routed';
 export const EVENT_SYNC_FAILED = 'sync_failed';
 export const EVENT_PLAN_GENERATED = 'plan_generated';
+export const EVENT_SESSION_REFLECTION_VIEWED = 'session_reflection_viewed';
 
 export type AnalyticsEvent =
   | typeof EVENT_WORKOUT_STARTED
@@ -37,7 +38,8 @@ export type AnalyticsEvent =
   | typeof EVENT_SESSION_ENDED
   | typeof EVENT_VOICE_UTTERANCE_ROUTED
   | typeof EVENT_SYNC_FAILED
-  | typeof EVENT_PLAN_GENERATED;
+  | typeof EVENT_PLAN_GENERATED
+  | typeof EVENT_SESSION_REFLECTION_VIEWED;
 
 export function initAnalytics(deviceId: string): void {
   if (initialized) return;

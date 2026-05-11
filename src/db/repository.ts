@@ -30,6 +30,8 @@ export interface IRepository {
   getStreak(exerciseId: string): Promise<number>;
   getTodayTarget(exerciseId: string): Promise<number | null>;
   getCurrentWeeklyPlan(exerciseId: string): Promise<WeeklyPlan | null>;
+  getSessionById(sessionId: string): Promise<Session | null>;
+  getSetsForSession(sessionId: string): Promise<WorkoutSet[]>;
   insertSession(session: Omit<Session, 'synced'>): Promise<void>;
   updateSession(id: string, updates: Partial<Session>): Promise<void>;
   insertSet(set: WorkoutSet): Promise<void>;
@@ -116,6 +118,58 @@ export function createRepository(db: SQLiteDatabase): IRepository {
         notes: row.notes,
         createdAt: row.created_at,
       };
+    },
+
+    // Local SQLite has no device_id column — Bearer-derived scoping
+    // happens server-side (sync.ts comment, RBAC 1.5.7). The session
+    // and its sets are the user's own data, so a single-PK lookup is
+    // sufficient here; cross-device leakage is impossible on-device.
+    async getSessionById(sessionId) {
+      const row = await db.getFirstAsync<{
+        id: string; exercise_id: string; weekly_plan_id: string | null;
+        session_type: 'regular' | 'evaluation'; target_reps: number | null;
+        started_at: string; ended_at: string | null; total_reps: number | null;
+        set_count: number | null; user_feedback: string | null; synced: number;
+      }>(
+        `SELECT id, exercise_id, weekly_plan_id, session_type, target_reps,
+                started_at, ended_at, total_reps, set_count, user_feedback,
+                synced
+         FROM sessions WHERE id = ?`,
+        [sessionId],
+      );
+      if (!row) return null;
+      return {
+        id: row.id,
+        exerciseId: row.exercise_id,
+        weeklyPlanId: row.weekly_plan_id,
+        sessionType: row.session_type,
+        targetReps: row.target_reps,
+        startedAt: row.started_at,
+        endedAt: row.ended_at,
+        totalReps: row.total_reps,
+        setCount: row.set_count,
+        userFeedback: row.user_feedback,
+        synced: row.synced === 1,
+      };
+    },
+
+    async getSetsForSession(sessionId) {
+      const rows = await db.getAllAsync<{
+        id: string; session_id: string; set_number: number; reps: number;
+        recorded_at: string; rest_seconds: number | null;
+      }>(
+        `SELECT id, session_id, set_number, reps, recorded_at, rest_seconds
+         FROM sets WHERE session_id = ? ORDER BY set_number ASC`,
+        [sessionId],
+      );
+      return rows.map((r) => ({
+        id: r.id,
+        sessionId: r.session_id,
+        setNumber: r.set_number,
+        reps: r.reps,
+        recordedAt: r.recorded_at,
+        restSeconds: r.rest_seconds,
+      }));
     },
 
     async insertSession(session) {

@@ -52,11 +52,24 @@ export interface GeneratePlanResponse {
   notes: string;
 }
 
+// Mirror of `backend/src/routes/sessions.ts` POST /reflect. The server
+// scopes the lookup by Bearer-derived deviceId and returns
+// `{ reflection: null }` when Ollama is unreachable or returns empty —
+// the Complete screen falls back to a static string in either case.
+export interface ReflectSessionRequest {
+  sessionId: string;
+}
+
+export interface ReflectSessionResponse {
+  reflection: string | null;
+}
+
 export interface IApiClient {
   voiceRespond(request: VoiceRequest): Promise<VoiceResponse>;
   voiceRespondStream(request: VoiceRequest): AsyncGenerator<StreamFrame, void, void>;
   syncWorkouts(request: SyncRequest): Promise<SyncResponse>;
   generateWeeklyPlan(request: GeneratePlanRequest): Promise<GeneratePlanResponse>;
+  reflectSession(request: ReflectSessionRequest): Promise<ReflectSessionResponse>;
   isReachable(): Promise<boolean>;
 }
 
@@ -101,6 +114,10 @@ export function createApiClient(baseUrl: string, options: ApiClientOptions = {})
 
   async function generateWeeklyPlan(request: GeneratePlanRequest): Promise<GeneratePlanResponse> {
     return fetchJson<GeneratePlanResponse>('/api/v1/plan/weekly', request);
+  }
+
+  async function reflectSession(request: ReflectSessionRequest): Promise<ReflectSessionResponse> {
+    return fetchJson<ReflectSessionResponse>('/api/v1/session/reflect', request);
   }
 
   async function* voiceRespondStream(
@@ -162,6 +179,7 @@ export function createApiClient(baseUrl: string, options: ApiClientOptions = {})
     voiceRespondStream,
     syncWorkouts,
     generateWeeklyPlan,
+    reflectSession,
     async isReachable(): Promise<boolean> {
       try {
         const response = await fetch(`${baseUrl}/health`, {

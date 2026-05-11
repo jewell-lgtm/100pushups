@@ -32,8 +32,10 @@ interface UseWorkoutSessionOptions {
   exerciseId: string;
   // Optional sync trigger called fire-and-forget after SAVE_SESSION
   // lands. Wired in `app/workout.tsx`; tests omit it to keep the hook
-  // independent from the singleton db/api modules.
-  onSessionSaved?: () => void;
+  // independent from the singleton db/api modules. Receives the just-
+  // saved sessionId so the screen can navigate to a per-session route
+  // (e.g. `/complete?sessionId=...`).
+  onSessionSaved?: (sessionId: string) => void;
 }
 
 export function useWorkoutSession({
@@ -84,8 +86,9 @@ export function useWorkoutSession({
               // Fire-and-forget: don't await — the user is already
               // navigating home and we don't want to block on the
               // network round-trip. The sync service handles its own
-              // errors and inflight coalescing.
-              onSessionSaved?.();
+              // errors and inflight coalescing. We pass the sessionId
+              // so screens can route the user to a per-session view.
+              onSessionSaved?.(sessionIdRef.current);
             }
             break;
           case 'NAVIGATE_HOME':
