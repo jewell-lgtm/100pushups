@@ -167,6 +167,9 @@ describe('voiceRespondStream', () => {
         yield { type: 'token', text: ' world' };
         yield { type: 'done', toolCalls: [], spokenResponse: 'Hello world' };
       },
+      async generateSessionReflection() {
+        return '';
+      },
     };
     const app = voiceRoutes(fakeClient);
     const res = await app.request('/respond/stream', {
@@ -193,6 +196,9 @@ describe('voiceRespondStream', () => {
       async *voiceRespondStream(): AsyncGenerator<StreamFrame, void, void> {
         yield { type: 'done', toolCalls: [{ name: 'start_set', params: {} }], spokenResponse: '' };
       },
+      async generateSessionReflection() {
+        return '';
+      },
     };
     const app = voiceRoutes(fakeClient);
     const res = await app.request('/respond/stream', {
@@ -215,6 +221,9 @@ describe('voiceRespondStream', () => {
       },
       async *voiceRespondStream(): AsyncGenerator<StreamFrame, void, void> {
         yield { type: 'done', toolCalls: [], spokenResponse: '' };
+      },
+      async generateSessionReflection() {
+        return '';
       },
     };
     const app = voiceRoutes(fakeClient);

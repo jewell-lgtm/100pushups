@@ -160,12 +160,34 @@ export type StreamFrame =
   | { type: 'token'; text: string }
   | { type: 'done'; toolCalls: ToolCall[]; spokenResponse: string };
 
+export interface ReflectionSession {
+  totalReps: number | null;
+  setsCount: number | null;
+  userFeedback: string | null;
+  startedAt: string;
+}
+
+export interface ReflectionRecentSession {
+  date: string;
+  totalReps: number;
+  userFeedback: string | null;
+}
+
+export interface ReflectionInput {
+  session: ReflectionSession;
+  recentSessions: ReflectionRecentSession[];
+  yesterdayTotal: number | null;
+  personalBest: number | null;
+  averageLast7: number | null;
+}
+
 export interface IOllamaClient {
   voiceRespond(transcript: string, context: VoiceContext): Promise<OllamaResponse>;
   voiceRespondStream(
     transcript: string,
     context: VoiceContext,
   ): AsyncGenerator<StreamFrame, void, void>;
+  generateSessionReflection(input: ReflectionInput): Promise<string>;
 }
 
 interface OllamaStreamFrame {
@@ -187,6 +209,42 @@ function authHeaderFromAuth(auth?: OllamaAuth): Record<string, string> {
   if (!auth) return {};
   const encoded = Buffer.from(`${auth.user}:${auth.password}`, 'utf8').toString('base64');
   return { Authorization: `Basic ${encoded}` };
+}
+
+function buildReflectionPrompt(input: ReflectionInput): string {
+  const lines = [
+    'You are a workout coach writing a brief reflection on the user\'s just-completed pushup session.',
+    'Tone: warm, brief gym buddy — same persona as the voice coach. Never robotic.',
+    '',
+    'Task: write ONE paragraph, 2-3 sentences MAX, that:',
+    '  1) Acknowledges today\'s actual numbers (total reps, sets, feedback if any) against the recent baseline (yesterday total, personal best, last-7-days average).',
+    '  2) Gives ONE forward-looking suggestion for tomorrow, grounded in those numbers — not generic encouragement.',
+    '',
+    'Constraints:',
+    '  - Plain text only. No emojis. No markdown. No bullet points. No headings.',
+    '  - 2-3 sentences. Do not exceed 3 sentences.',
+    '  - Do NOT call any tools. Respond with the paragraph only.',
+    '',
+    'Today\'s session:',
+    `  - Total reps: ${input.session.totalReps ?? 'unknown'}`,
+    `  - Sets completed: ${input.session.setsCount ?? 'unknown'}`,
+  ];
+  if (input.session.userFeedback) {
+    lines.push(`  - User feedback: "${input.session.userFeedback}"`);
+  }
+  lines.push('');
+  lines.push('Recent baseline:');
+  lines.push(`  - Yesterday total: ${input.yesterdayTotal ?? 'no data'}`);
+  lines.push(`  - Personal best (single set): ${input.personalBest ?? 'no data'}`);
+  lines.push(`  - Last 7 days average: ${input.averageLast7 ?? 'no data'}`);
+  if (input.recentSessions.length > 0) {
+    lines.push('');
+    lines.push('Recent sessions:');
+    for (const r of input.recentSessions) {
+      lines.push(`  - ${r.date}: ${r.totalReps} reps${r.userFeedback ? ` — "${r.userFeedback}"` : ''}`);
+    }
+  }
+  return lines.join('\n');
 }
 
 export function createOllamaClient(baseUrl: string, model: string, auth?: OllamaAuth): IOllamaClient {
@@ -243,6 +301,39 @@ export function createOllamaClient(baseUrl: string, model: string, auth?: Ollama
       context: VoiceContext,
     ): AsyncGenerator<StreamFrame, void, void> {
       return streamOllama(baseUrl, model, authHeaders, transcript, context);
+    },
+
+    async generateSessionReflection(input: ReflectionInput): Promise<string> {
+      const systemPrompt = buildReflectionPrompt(input);
+
+      const response = await fetch(`${baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        signal: AbortSignal.timeout(15000),
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: 'Write the reflection now.' },
+          ],
+          // No tools — reflection is a chat-style completion, not routing.
+          stream: false,
+          options: {
+            temperature: 0.7,
+            num_predict: 200,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Ollama error: ${response.status}`);
+      }
+
+      const data = (await response.json()) as {
+        message: { content?: string };
+      };
+
+      return data.message?.content?.trim() ?? '';
     },
   };
 }

@@ -315,6 +315,78 @@ liveDescribe('Live backend voice harness', () => {
     });
   });
 
+  describe('session reflection', () => {
+    it('returns a reflection (or null) for a freshly-synced session', async () => {
+      // Seed a session this device owns, then ask the backend to reflect on
+      // it. The reflection itself is non-deterministic (LLM output), so we
+      // only assert the response shape: 200 with { reflection: string|null }.
+      // Bearer header is required — this probe skips silently when
+      // TEST_REGISTER_KEY isn't set and we therefore have no token.
+      if (!AUTH_HEADER) return;
+
+      const sessionId = `reflect-${Date.now()}`;
+      const startedAt = new Date().toISOString();
+      const syncRes = await fetch(`${API_BASE}/api/v1/workouts/sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: AUTH_HEADER,
+        },
+        body: JSON.stringify({
+          sessions: [
+            {
+              id: sessionId,
+              exerciseId: 'pushups',
+              weeklyPlanId: null,
+              sessionType: 'regular',
+              targetReps: 30,
+              startedAt,
+              endedAt: startedAt,
+              totalReps: 32,
+              setCount: 3,
+              userFeedback: 'felt strong',
+              sets: [
+                { id: `${sessionId}-s1`, setNumber: 1, reps: 14, recordedAt: startedAt, restSeconds: null },
+                { id: `${sessionId}-s2`, setNumber: 2, reps: 10, recordedAt: startedAt, restSeconds: 90 },
+                { id: `${sessionId}-s3`, setNumber: 3, reps: 8, recordedAt: startedAt, restSeconds: 90 },
+              ],
+            },
+          ],
+        }),
+      });
+      expect(syncRes.status).toBe(200);
+
+      const res = await fetch(`${API_BASE}/api/v1/session/reflect`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: AUTH_HEADER,
+        },
+        body: JSON.stringify({ sessionId }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { reflection: string | null };
+      // Fail-soft contract: either a non-empty string OR explicit null.
+      if (body.reflection !== null) {
+        expect(typeof body.reflection).toBe('string');
+        expect(body.reflection.length).toBeGreaterThan(0);
+      }
+    }, 30_000);
+
+    it('returns 404 for an unknown sessionId', async () => {
+      if (!AUTH_HEADER) return;
+      const res = await fetch(`${API_BASE}/api/v1/session/reflect`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: AUTH_HEADER,
+        },
+        body: JSON.stringify({ sessionId: 'definitely-does-not-exist-xyz' }),
+      });
+      expect(res.status).toBe(404);
+    });
+  });
+
   describe('weekly plan generation', () => {
     it('generates a weekly plan from the live LLM', async () => {
       const res = await fetch(`${API_BASE}/api/v1/plan/weekly`, {

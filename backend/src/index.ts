@@ -7,6 +7,7 @@ import { createOllamaClient } from './ollama.js';
 import { voiceRoutes } from './routes/voice.js';
 import { workoutRoutes } from './routes/workouts.js';
 import { planningRoutes } from './routes/planning.js';
+import { sessionRoutes } from './routes/sessions.js';
 import { authRoutes } from './routes/auth.js';
 import { bearerAuth } from './middleware/bearerAuth.js';
 import { requestId } from './middleware/requestId.js';
@@ -62,6 +63,7 @@ app.use('/api/*', bearerAuth(authSecret));
 app.route('/api/v1/voice', voiceRoutes(ollama));
 app.route('/api/v1/workouts', workoutRoutes(db));
 app.route('/api/v1/plan', planningRoutes(db, OLLAMA_URL, OLLAMA_MODEL, ollamaAuth));
+app.route('/api/v1/session', sessionRoutes(db, ollama));
 
 const server = serve({ fetch: app.fetch, port: PORT }, (info) => {
   console.log(`pushup-api listening on :${info.port} (ollama: ${OLLAMA_URL}, model: ${OLLAMA_MODEL})`);
