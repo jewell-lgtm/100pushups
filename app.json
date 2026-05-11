@@ -24,7 +24,8 @@
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "RECORD_AUDIO"
-      ]
+      ],
+      "package": "com.jewelllgtm.x100pushups"
     },
     "web": {
       "favicon": "./assets/favicon.png"
