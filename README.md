@@ -1,6 +1,90 @@
 # 100 Pushups
 Voice-controlled pushup tracker with LLM coaching.
 
+## Build for Android
+
+The Expo app ships as a custom dev client (not Expo Go) because it
+uses `expo-secure-store` and `expo-sqlite`. `android/` is a generated
+artifact — it's gitignored and re-materialised from `app.json` on
+every prebuild.
+
+### Toolchain
+
+Versions are pinned in `.mise.toml`. From the repo root:
+
+```
+mise install            # one-time, installs java 17, android-sdk, node
+eval "$(mise activate zsh)"   # or prefix every command with `mise exec --`
+```
+
+Verify:
+
+```
+mise exec -- java -version    # OpenJDK 17 (Temurin)
+mise exec -- adb --version    # platform-tools on PATH
+```
+
+Accept Android SDK licenses once per machine:
+
+```
+yes | mise exec -- sdkmanager --licenses
+```
+
+### Generate the native project
+
+```
+mise exec -- npx expo prebuild --platform android --no-install
+```
+
+`--no-install` is required because dependencies are managed with pnpm,
+not npm. Re-run this any time `app.json` or any Expo config plugin
+changes (e.g. after adding `expo-system-ui`); the command is
+idempotent.
+
+### Run on a USB-connected device
+
+1. Enable Developer Options + USB debugging on the phone, plug it in,
+   accept the host's RSA fingerprint prompt.
+2. Confirm `mise exec -- adb devices` lists the phone as `device`
+   (not `unauthorized`).
+3. Build + install the dev client:
+
+   ```
+   mise exec -- npx expo run:android --device
+   ```
+
+The first build takes 5-20 minutes (Gradle pulls AGP, Kotlin, React
+Native artifacts). Subsequent builds are incremental.
+
+### Required environment variables
+
+`EXPO_PUBLIC_*` vars are inlined into the JS bundle at build time. Expo
+itself reads them from `.env.local` in the repo root (no mise plumbing
+needed). The dev-laptop `.env.local` points at `http://localhost:3000`
+which is **not reachable from the phone** — override either by editing
+`.env.local` before the build or by passing them inline:
+
+```
+EXPO_PUBLIC_API_BASE=https://pushups.example/ \
+EXPO_PUBLIC_REGISTER_API_KEY=<shared secret> \
+mise exec -- npx expo run:android --device
+```
+
+On first launch the app exchanges `REGISTER_API_KEY` for a per-device
+bearer token via `/auth/register` and stores it in `expo-secure-store`.
+See the **Auth secret rotation** section below for how to roll either
+key.
+
+### Regenerating `android/`
+
+If `android/` gets into a weird state, delete it and re-prebuild — no
+state in there is hand-edited, everything flows from `app.json`:
+
+```
+rm -rf android
+mise exec -- npx expo prebuild --platform android --no-install
+```
+
 ## Auth secrets (provisioned externally)
 
 The `pushup-api-auth` Secret (containing `AUTH_SECRET` and
