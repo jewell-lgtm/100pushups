@@ -157,7 +157,7 @@ export default function CompleteScreen() {
         )}
         <View style={styles.reflectionWaveform}>
           <Waveform
-            active={false}
+            mode="idle"
             color="#ffffff"
             accent={colors.sageSoft}
             width={180}

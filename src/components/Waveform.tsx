@@ -12,54 +12,79 @@ import Svg, { Circle, Defs, RadialGradient, Stop } from 'react-native-svg';
 // their props on the UI thread without React re-renders.
 const ACircle = Animated.createAnimatedComponent(Circle);
 
+// The Waveform encodes turn-taking directly so the user can read whose
+// turn it is at a glance, without looking at any text:
+//
+//   speaking  — the coach is talking. Iris CONTRACTS to a small, bright
+//               focal point. A fast "talking" ripple layers on top of
+//               the slow breath. Reads as "they're telling you something."
+//
+//   listening — the user is speaking; the coach is receiving. Iris
+//               DILATES to a wide, soft halo (~2× speaking size). No
+//               talking ripple; calm breath only. Reads as "they're
+//               listening to you."
+//
+//   idle      — between turns / no conversation. Iris settles at a
+//               middle size. Calm breath; no talking ripple.
+//
+// Transitions between modes tween 700ms so the eye glides between
+// states rather than snapping.
+export type WaveformMode = 'speaking' | 'listening' | 'idle';
+
 interface WaveformProps {
-  // When true, the blob morphs at full amplitude (coach speaking / thinking).
-  // When false the blob settles into the slow HAL breath — never frozen,
-  // never dead. The two states share the slow breath; `active` layers on a
-  // faster, smaller "talking" rhythm.
-  active: boolean;
-  // Base colour of the blob — outer halo + the gradient outer stop.
+  mode: WaveformMode;
+  // Base colour of the blob — outer halo + outer gradient stop.
   color: string;
-  // Brighter accent that the core gradient warms toward at the peak of each
-  // breath. Falls back to `color` when omitted, but the HAL effect needs a
-  // contrast so callers should pass one (sage vs sageSoft).
+  // Brighter accent for the iris highlight + inner gradient stop. Falls
+  // back to `color` if omitted, but the speaking/listening contrast is
+  // clearer when the two differ (sage + sageSoft is the design pairing).
   accent?: string;
   width: number;
   height: number;
 }
 
-// Animated radial blob — "HAL eye." Four layers stacked back-to-front share a
-// single slow breath (~4s period) and a faster talking rhythm gated to
-// `active`. The breath drives:
-//   • Subtle outer-halo radius swell (always alive — never freezes)
-//   • Mid-ring opacity pulse (the "presence")
-//   • Core gradient brightness — opacity blends 0.55 → 1.0 across the cycle
-//   • Bright "iris" highlight that focuses (small + bright) and softens
-//     (larger + dimmer) — the part that makes the eye feel like it's
-//     watching back.
-//
-// Two clocks: `breath` runs forever on the UI thread; `talk` runs forever
-// too but `talkAmp` (the multiplier we wrap it in) is tween-collapsed to 0
-// when `active` is false so the static breath stays clean.
+// Tween duration when switching turn modes. Long enough to feel calm,
+// short enough that "your turn → my turn" is recognisable mid-glance.
+const MODE_TWEEN_MS = 700;
+
+// Slow breath drives "alive but at rest." Talking ripple is fast enough
+// to read as speech without buzzing.
+const BREATH_FREQ = 1.5; // 2π / 1.5 ≈ 4.2s period
+const TALK_FREQ = 10.5;
+
+// Iris radius coefficients, expressed as fractions of the blob height.
+// The 2× contrast between SPEAKING and LISTENING is intentional — it's
+// the primary cue for "whose turn it is."
+const IRIS_BASE = 0.13;
+const IRIS_CONTRACT = 0.06; // speaking pulls iris down to ~0.07
+const IRIS_DILATE = 0.09;   // listening pushes iris up to ~0.22
+
 export function Waveform({
-  active,
+  mode,
   color,
   accent,
   width,
   height,
 }: WaveformProps) {
-  // Monotonic seconds since mount — feeds both clocks.
+  // Monotonic seconds since mount.
   const t = useSharedValue(0);
-  // Multiplier on the fast "talking" rhythm. Tweens 0 ↔ 1 so the transition
-  // between idle breath and active morphing is continuous.
-  const talkAmp = useSharedValue(active ? 1 : 0);
+
+  // Two amounts tween in parallel — exactly one is at 1 (or both at 0 for
+  // idle). Driving them independently keeps the worklet math simple and
+  // makes future modes (e.g. "thinking") trivial to add.
+  const speakingAmount = useSharedValue(mode === 'speaking' ? 1 : 0);
+  const listeningAmount = useSharedValue(mode === 'listening' ? 1 : 0);
 
   useEffect(() => {
-    talkAmp.value = withTiming(active ? 1 : 0, {
-      duration: 700,
-      easing: Easing.out(Easing.cubic),
+    speakingAmount.value = withTiming(mode === 'speaking' ? 1 : 0, {
+      duration: MODE_TWEEN_MS,
+      easing: Easing.inOut(Easing.cubic),
     });
-  }, [active, talkAmp]);
+    listeningAmount.value = withTiming(mode === 'listening' ? 1 : 0, {
+      duration: MODE_TWEEN_MS,
+      easing: Easing.inOut(Easing.cubic),
+    });
+  }, [mode, speakingAmount, listeningAmount]);
 
   useFrameCallback((info) => {
     'worklet';
@@ -70,72 +95,84 @@ export function Waveform({
   const cx = width / 2;
   const cy = height / 2;
 
-  // Breath period ≈ 4.2s (2π / 1.5) — a deliberate "deep breath" cadence.
-  // Talking rhythm is ~1.7Hz, fast enough to read as speech without buzzing.
-  const BREATH_FREQ = 1.5;
-  const TALK_FREQ = 10.5;
-
-  // Outer halo — wider than the visual core. The halo's job is to give the
-  // blob mass; it swells gently with the breath but never moves laterally.
+  // Outer halo — slow swell, never freezes. Listening opens it slightly
+  // wider as a secondary "ears open" cue beyond the iris.
   const outerProps = useAnimatedProps(() => {
     'worklet';
-    const breath = Math.sin(t.value * BREATH_FREQ); // -1..1
-    const talk = Math.sin(t.value * TALK_FREQ + 1.3) * talkAmp.value;
-    const swell = 10 + 4 * talkAmp.value;
+    const breath = Math.sin(t.value * BREATH_FREQ);
+    const talk = Math.sin(t.value * TALK_FREQ + 1.3) * speakingAmount.value;
+    const baseSwell = 10;
+    const widen = listeningAmount.value * 6;
     return {
-      r: height * 0.46 + breath * swell + talk * 2,
+      r: height * 0.46 + widen + breath * baseSwell + talk * 2,
       opacity: 0.13 + 0.05 * (0.5 + 0.5 * breath),
     };
   });
 
-  // Mid ring — slightly tighter, opacity does most of the work. This is the
-  // "presence" layer; it gets denser at the peak of the breath.
+  // Mid ring — "presence" pulse via opacity. Drifts laterally a couple of
+  // pixels so the blob doesn't feel pinned.
   const midProps = useAnimatedProps(() => {
     'worklet';
     const breath = Math.sin(t.value * BREATH_FREQ + 0.6);
-    const talk = Math.sin(t.value * TALK_FREQ * 0.7 + 0.4) * talkAmp.value;
+    const talk = Math.sin(t.value * TALK_FREQ * 0.7 + 0.4) * speakingAmount.value;
     return {
-      r: height * 0.38 + breath * (8 + 3 * talkAmp.value) + talk * 2,
+      r: height * 0.38 + breath * 8 + talk * 2,
       opacity: 0.20 + 0.12 * (0.5 + 0.5 * breath),
       cx: cx + Math.sin(t.value * 0.6) * 2,
       cy: cy + Math.cos(t.value * 0.8) * 2,
     };
   });
 
-  // Core gradient blob — the body of the eye. Radius is fairly stable; the
-  // gradient does the work via its parent opacity (we can't animate Stop
-  // opacities on the UI thread with react-native-svg).
+  // Core gradient blob — body of the eye. Brightness goes 0.55 → 1.0 over
+  // the breath; speaking pumps a faster intensity on top.
   const coreProps = useAnimatedProps(() => {
     'worklet';
     const breath = Math.sin(t.value * BREATH_FREQ + 1.2);
-    const talk = Math.sin(t.value * TALK_FREQ * 1.1) * talkAmp.value;
+    const talk = Math.sin(t.value * TALK_FREQ * 1.1) * speakingAmount.value;
+    const pulseAmp = 0.45 + 0.15 * speakingAmount.value;
     return {
-      r: height * 0.32 + breath * (4 + 4 * talkAmp.value) + talk * 3,
-      // Opacity is the "brightness" — 0.55 to 1.0 over the breath. This is
-      // what makes the eye visibly "alive" even when nothing else is moving.
-      opacity: 0.55 + 0.45 * (0.5 + 0.5 * breath),
+      r: height * 0.32 + breath * 4 + talk * 3,
+      opacity: 0.55 + pulseAmp * (0.5 + 0.5 * breath),
     };
   });
 
-  // Bright iris highlight — the small focal point inside the core. This is
-  // the "watching back" layer: it CONTRACTS at peak-breath (focused gaze)
-  // and softens / widens / dims at trough (relaxed gaze). Anti-correlated
-  // with the core to read as a real iris.
+  // The iris — the turn-state cue. Radius contrasts ~2× between speaking
+  // and listening; opacity stays high when speaking (focused), softens
+  // when listening (receptive).
   const irisProps = useAnimatedProps(() => {
     'worklet';
     const breath = Math.sin(t.value * BREATH_FREQ + 1.2);
-    const talkJitter = Math.sin(t.value * TALK_FREQ * 1.3) * 2 * talkAmp.value;
-    // Inverted: bigger at trough, tighter at peak.
-    const focus = 0.5 - 0.5 * breath; // 0 at peak, 1 at trough
+    const talkJitter =
+      Math.sin(t.value * TALK_FREQ * 1.3) * 2 * speakingAmount.value;
+
+    // Base radius for the current mode (tweens between modes via the
+    // shared amounts). At idle, both amounts are 0 → IRIS_BASE.
+    const modeRadius =
+      IRIS_BASE
+      - speakingAmount.value * IRIS_CONTRACT
+      + listeningAmount.value * IRIS_DILATE;
+
+    // Layered breath: when speaking, the iris also "punches" with the
+    // breath peak (focused gaze gets brighter at peak). When listening,
+    // breath modulation is gentler and inverted (subtle, like the pupil
+    // adjusting to incoming sound).
+    const breathScale =
+      0.5 + 0.5 * breath * (speakingAmount.value - listeningAmount.value * 0.4);
+
     return {
-      r: height * 0.10 + focus * (height * 0.04) + talkJitter,
-      // Brighter at peak, dimmer at trough. Reaches 1.0 momentarily.
-      opacity: 0.5 + 0.5 * (0.5 + 0.5 * breath),
+      r: height * modeRadius + height * 0.03 * breathScale + talkJitter,
+      // Speaking → near full brightness; listening → softer; idle in
+      // between. Tiny breath flicker layered on top.
+      opacity:
+        0.55
+        + 0.4 * speakingAmount.value
+        + 0.15 * listeningAmount.value
+        + 0.1 * (0.5 + 0.5 * breath),
     };
   });
 
-  // Stable gradient ids derived from the colour so two Waveform instances on
-  // the same screen don't share `<defs>` and cope with SVG-id collisions.
+  // Stable gradient ids derived from the colour so two Waveform instances
+  // on the same screen don't share `<defs>` and collide on SVG ids.
   const baseId = color.replace(/[^a-z0-9]/gi, '');
   const coreGradId = `waveform-core-${baseId}`;
   const irisGradId = `waveform-iris-${baseId}`;

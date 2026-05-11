@@ -48,7 +48,7 @@ import { colors } from '../src/theme/colors';
 import { font } from '../src/theme/type';
 import { spacing } from '../src/theme/spacing';
 import { radii } from '../src/theme/radii';
-import { Waveform } from '../src/components/Waveform';
+import { Waveform, type WaveformMode } from '../src/components/Waveform';
 import { MicButton, type MicState } from '../src/components/MicButton';
 import { RestTimer } from '../src/components/RestTimer';
 import { RepCounter } from '../src/components/RepCounter';
@@ -241,18 +241,17 @@ export default function WorkoutScreen() {
     : userJustReplied
       ? 'Listening'
       : 'Tap when ready';
-  // The MicButton has a `listening`/`speaking`/`idle` variant; map our
-  // derived status into it. `speaking` dims the button so the user
-  // doesn't tap during a coach turn.
-  const micState: MicState = coachIsActive
+  // The MicButton and Waveform share the same turn-state vocabulary —
+  // one `turnMode` powers both so they stay perfectly in sync.
+  // `speaking` (coach mid-response) dims the mic + contracts the iris;
+  // `listening` (user replied last) pulses the mic + dilates the iris;
+  // `idle` is the calm between-turns state.
+  const turnMode: MicState & WaveformMode = coachIsActive
     ? 'speaking'
     : userJustReplied
       ? 'listening'
       : 'idle';
-
-  // Waveform's `active` prop animates the talking rhythm — we want that
-  // whenever the coach is mid-response. Otherwise the slow breath only.
-  const waveformActive = coachIsActive;
+  const micState: MicState = turnMode;
 
   // Memoise the time-of-day label so we don't recompute on every render
   // (it can stay stable until the screen remounts; the user isn't going
@@ -287,7 +286,7 @@ export default function WorkoutScreen() {
       {/* Hero blob — Waveform + overlay (rep counter / rest timer) */}
       <View style={styles.hero}>
         <Waveform
-          active={waveformActive}
+          mode={turnMode}
           color={colors.sage}
           accent={colors.sageSoft}
           width={260}
